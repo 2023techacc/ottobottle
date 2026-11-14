@@ -1,0 +1,7 @@
+# 시뮬레이션 결과. 시드가 고정돼 있어서 `npm run sim` 등으로 똑같이 다시 만들 수 있다.
+sim/out/
+
+node_modules/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

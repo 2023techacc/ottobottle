@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>카드 오토배틀러 (가제) — 결투 플레이 테스트</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- ── 설정 화면 ── -->
+    <section id="setup">
+      <h1>카드 오토배틀러 <small>(가제) · 1:1 결투 플레이 테스트</small></h1>
+      <p class="lead">봇과 한 판 붙어 보는 화면이다. 상점·경제는 아직 없고, 전투 한 판만 한다.
+        카드를 누른 뒤 놓을 칸이나 표적을 누르면 된다. 숫자 키 1~7로도 카드를 고를 수 있다.</p>
+
+      <div class="setup-grid">
+        <fieldset>
+          <legend>나</legend>
+          <label>지휘관 <select id="myCommander"></select></label>
+          <label>덱 <select id="myDeckType">
+            <option value="start">시작 덱 (8장)</option>
+            <option value="mid" selected>중반 덱 (무작위)</option>
+          </select></label>
+          <div id="vanguardBox">
+            <label>선봉 <select id="myVanguard"></select></label>
+            <label>선봉 칸 <select id="myVanguardSlot"></select></label>
+          </div>
+          <p class="passive" id="myPassive"></p>
+          <p class="pickhint" id="pickHint"></p>
+          <div class="decklist" id="myDeck"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>상대 (봇)</legend>
+          <label>지휘관 <select id="opCommander"></select></label>
+          <label>덱 <select id="opDeckType">
+            <option value="start">시작 덱 (8장)</option>
+            <option value="mid" selected>중반 덱 (무작위)</option>
+          </select></label>
+          <label>난이도 <select id="botLevel">
+            <option value="easy">쉬움 (반응 0.8~1.6초, 가끔 실수)</option>
+            <option value="normal" selected>보통 (반응 0.3~1초)</option>
+            <option value="hard">어려움 (반응 0.1~0.3초)</option>
+          </select></label>
+          <p class="passive" id="opPassive"></p>
+          <p class="pickhint" id="opPicks"></p>
+          <div class="decklist" id="opDeck"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>전투</legend>
+          <label>전장 <select id="battlefield"></select></label>
+          <label>규칙 <select id="preset"></select></label>
+          <label>시드 <input id="seed" type="number" min="1" step="1"></label>
+          <div class="row">
+            <button id="reroll" type="button">덱 다시 뽑기</button>
+            <button id="start" type="button" class="primary">전투 시작</button>
+          </div>
+          <p class="note" id="presetNote"></p>
+          <p class="note">같은 시드와 설정이면 덱과 뽑는 순서가 똑같이 나온다.</p>
+        </fieldset>
+      </div>
+    </section>
+
+    <!-- ── 전투 화면 ── -->
+    <section id="battle" hidden>
+      <header class="topbar">
+        <div class="clock"><span id="clock">0.0</span><small>/ <span id="clockMax">40</span>초</small></div>
+        <div class="timebar"><div id="timefill"></div><div id="overtimeMark"></div></div>
+        <div class="field" id="fieldInfo"></div>
+        <div class="speed" id="speed">
+          <button data-speed="0" title="스페이스">일시정지</button>
+          <button data-speed="0.5">0.5×</button>
+          <button data-speed="1" class="on">1×</button>
+          <button data-speed="2">2×</button>
+        </div>
+        <button id="quit" type="button">그만두기</button>
+      </header>
+
+      <div class="arena">
+        <div class="main">
+          <div class="commander enemy" id="cmd1"></div>
+          <div class="board" id="board"></div>
+          <div class="commander me" id="cmd0"></div>
+          <div class="hint" id="hint"></div>
+          <div class="hand" id="hand"></div>
+        </div>
+        <aside class="log">
+          <h2>기록</h2>
+          <ol id="log"></ol>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ── 결과 ── -->
+    <div id="result" hidden>
+      <div class="result-box">
+        <h2 id="resultTitle"></h2>
+        <p id="resultDetail"></p>
+        <table id="resultStats"></table>
+        <div class="row">
+          <button id="again" type="button" class="primary">새 시드로 다시</button>
+          <button id="replay" type="button">같은 시드로 다시</button>
+          <button id="toSetup" type="button">설정으로</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
