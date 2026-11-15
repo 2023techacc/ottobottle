@@ -196,37 +196,58 @@ function startBattle(sameSeed = false) {
     myVanguard = [{ index, row, slot }];
   }
 
-  const state = E.createBattle({
-    seed,
-    battlefield,
-    rules,
-    players: [
-      { commander: commanders[ME], deck: decks[ME], vanguard: myVanguard, opening: setup.opening },
-      {
-        commander: commanders[OP],
-        deck: decks[OP],
-        vanguard: E.pickVanguard(decks[OP], full.vanguardSlots, { maxCost: full.vanguardMaxCost }),
-        opening: setup.opOpening,
-      },
-    ],
+  launchBattle({
+    cfg: {
+      seed,
+      battlefield,
+      rules,
+      players: [
+        { commander: commanders[ME], deck: decks[ME], vanguard: myVanguard, opening: setup.opening },
+        {
+          commander: commanders[OP],
+          deck: decks[OP],
+          vanguard: E.pickVanguard(decks[OP], full.vanguardSlots, { maxCost: full.vanguardMaxCost }),
+          opening: setup.opOpening,
+        },
+      ],
+    },
+    botOpts: { seed: E.hashSeed(seed, 'bot'), ...E.BOT_LEVELS[$('botLevel').value] },
   });
+}
 
+/** 지금 보이는 화면을 바꾼다 */
+function showScreen(name) {
+  for (const id of ['lobby', 'setup', 'shop', 'battle']) $(id).hidden = id !== name;
+  $('modeTabs').hidden = name !== 'lobby' && name !== 'setup';
+  $('result').hidden = true;
+  $('roundResult').hidden = true;
+  if (name === 'lobby' || name === 'setup') {
+    for (const b of $('modeTabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.mode === name);
+  }
+}
+
+/**
+ * 전투 화면을 띄운다.
+ * onFinish가 있으면 전투가 끝났을 때 결과 창 대신 그것을 부른다 (한 경기 모드).
+ */
+function launchBattle({ cfg, botOpts, onFinish = null, label = '' }) {
+  const state = E.createBattle(cfg);
   game = {
     state,
-    bot: E.createBot({ seed: E.hashSeed(seed, 'bot'), ...E.BOT_LEVELS[$('botLevel').value] }),
+    bot: E.createBot(botOpts),
     speed: 1,
     timer: null,
     sel: null, // { mode: 'play'|'redraw', uid, unitId }
     cache: new Map(),
-    logCount: 0,
+    onFinish,
   };
 
-  $('setup').hidden = true;
-  $('result').hidden = true;
-  $('battle').hidden = false;
+  showScreen('battle');
+  const battlefield = state.battlefield;
   $('clockMax').textContent = String(state.rules.battleMs / 1000);
   $('overtimeMark').style.left = `${(state.rules.overtimeMs / state.rules.battleMs) * 100}%`;
-  $('fieldInfo').textContent = battlefield ? `전장: ${E.BATTLEFIELDS[battlefield].name} — ${E.BATTLEFIELDS[battlefield].text}` : '전장: 없음';
+  $('fieldInfo').textContent = (label ? `${label} · ` : '')
+    + (battlefield ? `전장: ${E.BATTLEFIELDS[battlefield].name} — ${E.BATTLEFIELDS[battlefield].text}` : '전장: 없음');
   $('log').innerHTML = '';
   const known = state.players[ME].knownEnemyOpening;
   if (known && known.length) logLine(0, ME, `<b>첩보원</b> 상대의 시작 카드: ${esc(known.map((c) => E.cardLabel(c)).join(', '))}`);
@@ -257,8 +278,10 @@ function tick() {
   E.step(state);
   consumeEvents();
   render();
-  if (state.over) showResult();
-  else schedule();
+  if (state.over) {
+    if (game.onFinish) game.onFinish(state);
+    else showResult();
+  } else schedule();
 }
 
 function setSpeed(v) {
@@ -344,7 +367,7 @@ function commanderHtml(state, side) {
   for (let i = 0; i < shown; i++) pips.push(`<i class="pip${i < P.mana ? (i >= P.maxMana ? ' over' : ' full') : ''}"></i>`);
   const last = P.lastPlayed && state.timeMs - P.lastPlayed.at < 4000 ? `낸 카드: ${esc(P.lastPlayed.name)}` : '';
   const redraw = side === ME ? '' : '';
-  return `<span class="name">${side === ME ? '나' : '상대'} · ${esc(c.name)}</span>
+  return `<span class="name">${side === ME ? '나' : '상대'} · ${esc(P.name || c.name)}</span>
     <div class="hpbar"><i style="width:${Math.max(0, (P.hp / P.maxHp) * 100)}%"></i><span>${fmt(Math.max(0, P.hp))} / ${P.maxHp}</span></div>
     <div class="pips" title="마나 ${P.mana} / ${P.maxMana}">${pips.join('')}</div>
     <span class="meta">마나 <b>${P.mana}/${P.maxMana}</b> · 손패 <b>${P.hand.length}</b> · 덱 <b>${P.deck.length}</b> · 버림 <b>${P.discard.length}</b></span>
@@ -658,8 +681,9 @@ function initInput() {
   $('quit').addEventListener('click', () => {
     stopBattle();
     game = null;
-    $('battle').hidden = true;
-    $('setup').hidden = false;
+    const back = match ? 'lobby' : 'setup';
+    endMatch();
+    showScreen(back);
   });
   $('again').addEventListener('click', () => {
     $('seed').value = String(1 + Math.floor(Math.random() * 99999));
@@ -670,9 +694,7 @@ function initInput() {
   $('toSetup').addEventListener('click', () => {
     stopBattle();
     game = null;
-    $('result').hidden = true;
-    $('battle').hidden = true;
-    $('setup').hidden = false;
+    showScreen('setup');
   });
   document.addEventListener('keydown', (ev) => {
     if (!game || $('battle').hidden) return;
@@ -725,3 +747,437 @@ initInput();
 // 자동 검증과 디버깅용
 window.__game = () => game;
 window.__engine = E;
+
+// ═════════════════════════════════════════════════════════════
+// 한 경기 모드: 사전 선택 → [상점 → 전투] 반복
+// 규칙은 ../engine/game.js 에 있고, 여기는 화면만 다룬다.
+// ═════════════════════════════════════════════════════════════
+
+let match = null; // { game, botLevel, botStyle, shopSeconds, sel, fuseBody, timerId, deadline, hint }
+const lobby = { picks: [] };
+const STYLE_NAMES = { eco: '저축형', balanced: '균형형', spend: '소비형' };
+const FORMAT_NAMES = { practice: '연습 (중립 몬스터)', duel: '결투' };
+
+function initMatch() {
+  const cmds = E.COMMANDER_IDS.map((id) => [id, E.COMMANDERS[id].name]);
+  fillSelect($('mCommander'), cmds, 'general');
+  fillSelect($('mOpCommander'), [['random', '무작위'], ...cmds], 'random');
+  $('mSeed').value = String(1 + Math.floor(Math.random() * 99999));
+  lobby.picks = E.botPicks(E.makeRng(7));
+
+  $('modeTabs').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (b) showScreen(b.dataset.mode);
+  });
+  $('mCommander').addEventListener('change', renderLobby);
+  $('mPicks').addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.chip');
+    if (!chip) return;
+    const id = chip.dataset.id;
+    if (lobby.picks.includes(id)) lobby.picks = lobby.picks.filter((x) => x !== id);
+    else if (lobby.picks.length < E.DEFAULT_ECON.picks) {
+      const t5 = lobby.picks.filter((x) => E.CARDS[x].tier === 5).length;
+      if (E.CARDS[id].tier === 5 && t5 >= E.DEFAULT_ECON.maxTier5Picks) return;
+      lobby.picks.push(id);
+    }
+    renderLobby();
+  });
+  $('mAutoPicks').addEventListener('click', () => {
+    lobby.picks = E.botPicks(E.makeRng(Math.floor(Math.random() * 1e9)));
+    renderLobby();
+  });
+  $('mClearPicks').addEventListener('click', () => {
+    lobby.picks = [];
+    renderLobby();
+  });
+  $('mStart').addEventListener('click', startMatch);
+
+  // 상점 화면
+  $('sShop').addEventListener('click', (ev) => {
+    const el = ev.target.closest('.card[data-slot]');
+    if (el && match) shopAct(() => E.buy(match.game, ME, Number(el.dataset.slot)));
+  });
+  $('sShopButtons').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b || !match) return;
+    if (b.dataset.act === 'reroll') shopAct(() => E.reroll(match.game, ME));
+    if (b.dataset.act === 'lock') shopAct(() => E.toggleLock(match.game, ME));
+    if (b.dataset.act === 'xp') shopAct(() => E.buyXp(match.game, ME));
+  });
+  $('sDeck').addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.chip');
+    if (!chip || !match) return;
+    const key = Number(chip.dataset.key);
+    if (match.fuseBody && match.fuseBody !== key) {
+      const body = match.fuseBody;
+      match.fuseBody = null;
+      shopAct(() => E.fuse(match.game, ME, body, key));
+      return;
+    }
+    match.fuseBody = null;
+    match.sel = match.sel === key ? null : key;
+    renderShop();
+  });
+  $('sDeckActions').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b || !match) return;
+    const { game } = match;
+    const P = game.players[ME];
+    const key = match.sel;
+    switch (b.dataset.act) {
+      case 'opening': {
+        let keys = [...P.opening];
+        if (keys.includes(key)) keys = keys.filter((k) => k !== key);
+        else {
+          keys.push(key);
+          while (keys.length > E.openingCount(game, ME)) keys.shift();
+        }
+        E.setOpening(game, ME, keys);
+        renderShop();
+        break;
+      }
+      case 'remove':
+        shopAct(() => {
+          const res = E.removeCard(game, ME, key);
+          if (res.ok) match.sel = null;
+          return res;
+        });
+        break;
+      case 'fuse':
+        match.fuseBody = key;
+        renderShop();
+        break;
+      case 'cancelFuse':
+        match.fuseBody = null;
+        renderShop();
+        break;
+      case 'upgrade':
+        shopAct(() => E.upgrade(game, ME, b.dataset.id, Number(b.dataset.stars)));
+        break;
+      default:
+        break;
+    }
+  });
+  $('sReady').addEventListener('click', goBattle);
+  $('sQuit').addEventListener('click', () => {
+    endMatch();
+    showScreen('lobby');
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (!match || $('shop').hidden || ev.target.matches('input, select, textarea')) return;
+    if (ev.key === 'd' || ev.key === 'D' || ev.key === 'ㅇ') shopAct(() => E.reroll(match.game, ME));
+    else if (ev.key === 'f' || ev.key === 'F' || ev.key === 'ㄹ') shopAct(() => E.buyXp(match.game, ME));
+    else if (ev.key === 'Escape') {
+      match.sel = null;
+      match.fuseBody = null;
+      renderShop();
+    }
+  });
+
+  renderLobby();
+  showScreen('lobby');
+}
+
+// ───────────────────────── 사전 선택 ─────────────────────────
+
+function renderLobby() {
+  const c = E.COMMANDERS[$('mCommander').value];
+  $('mPassive').textContent = `패시브: ${c.passive} · 시작 덱: ${c.deck.map((id) => E.CARDS[id].name).join(', ')}`;
+  const need = E.DEFAULT_ECON.picks;
+  $('mPickHint').textContent = `픽 카드 ${need}종을 고른다 (${lobby.picks.length}/${need}). 고른 카드는 풀에 더 많이 들어가고, 상점 한 칸은 내 픽에서만 뜬다. 5등급은 1종까지.`;
+  $('mPicks').innerHTML = [...E.POOL_CARD_IDS]
+    .sort((a, b) => E.CARDS[a].tier - E.CARDS[b].tier || E.CARDS[a].cost - E.CARDS[b].cost)
+    .map((id) => {
+      const def = E.CARDS[id];
+      const on = lobby.picks.includes(id);
+      return `<span class="chip ${def.type} pickable${on ? ' picked' : ''}" data-id="${id}" role="button" title="${esc(def.text || '')}"><b>${def.tier}등급</b>${esc(def.name)}${on ? ' ✓' : ''}</span>`;
+    })
+    .join('');
+  $('mStart').disabled = lobby.picks.length !== need;
+}
+
+function startMatch() {
+  if (!E.validatePicks(lobby.picks).ok) return;
+  const seed = Number($('mSeed').value) || 1;
+  const rng = E.makeRng(E.hashSeed(seed, 'opponent'));
+  let opCommander = $('mOpCommander').value;
+  if (opCommander === 'random') opCommander = rng.pick(E.COMMANDER_IDS);
+  let botStyle = $('mBotStyle').value;
+  if (botStyle === 'random') botStyle = rng.pick(Object.keys(E.SHOP_STYLES));
+  const g = E.createGame({
+    seed,
+    players: [
+      { commander: $('mCommander').value, picks: lobby.picks },
+      { commander: opCommander, picks: E.botPicks(rng) },
+    ],
+  });
+  match = {
+    game: g,
+    botLevel: $('mBotLevel').value,
+    botStyle,
+    shopSeconds: Number($('mShopTime').value),
+    sel: null,
+    fuseBody: null,
+    timerId: null,
+    deadline: 0,
+    hint: '',
+  };
+  beginShop();
+}
+
+function endMatch() {
+  if (match && match.timerId) clearInterval(match.timerId);
+  match = null;
+}
+
+// ───────────────────────── 상점 ─────────────────────────
+
+function beginShop() {
+  const { game } = match;
+  // 봇이 먼저 상점을 본다. 첩보원이면 그 뒤에 상대의 시작 카드를 볼 수 있다.
+  E.runShopBot(game, OP, { style: match.botStyle });
+  fillOpening();
+  match.sel = null;
+  match.fuseBody = null;
+  match.hint = '';
+  showScreen('shop');
+  if (match.timerId) clearInterval(match.timerId);
+  match.timerId = null;
+  if (match.shopSeconds > 0) {
+    match.deadline = Date.now() + match.shopSeconds * 1000;
+    match.timerId = setInterval(tickShopTimer, 200);
+  }
+  renderShop();
+  tickShopTimer();
+}
+
+/** 고른 시작 카드가 허용 장수보다 적으면 추천 카드로 채운다 */
+function fillOpening() {
+  const { game } = match;
+  const P = game.players[ME];
+  const max = E.openingCount(game, ME);
+  const keys = P.opening.filter((k) => P.deck.some((c) => c.key === k));
+  if (keys.length < max) {
+    const order = E.pickOpening(P.deck, P.deck.length, 'tempo', null, game.battleRules.startMana ?? 3).map((i) => P.deck[i].key);
+    for (const k of order) {
+      if (keys.length >= max) break;
+      if (!keys.includes(k)) keys.push(k);
+    }
+  }
+  E.setOpening(game, ME, keys);
+}
+
+function tickShopTimer() {
+  if (!match) return;
+  const el = $('sTimer');
+  if (match.shopSeconds <= 0) {
+    el.textContent = '';
+    return;
+  }
+  const left = Math.max(0, match.deadline - Date.now());
+  el.textContent = `${Math.ceil(left / 1000)}초`;
+  el.classList.toggle('low', left <= 10000);
+  if (left <= 0) goBattle();
+}
+
+function shopAct(fn) {
+  if (!match || match.game.phase !== 'shop') return;
+  const res = fn();
+  match.hint = res.ok ? '' : `할 수 없다: ${res.reason}`;
+  fillOpening();
+  renderShop();
+}
+
+function shopCardHtml(game, P, s, i) {
+  if (!s) return '<div class="card empty">비어 있음</div>';
+  const def = E.CARDS[s.id];
+  const cost = def.tier;
+  const own = P.deck.filter((c) => c.id === s.id && c.stars === 1).length;
+  const soldOut = game.pool[s.id] <= 0;
+  const cls = ['card', def.type];
+  if (s.sold) cls.push('sold');
+  else if (soldOut || P.gold < cost) cls.push('off');
+  const r = game.battleRules;
+  const stat = def.type === 'unit'
+    ? `${fmt(def.atk * (r.unitAtkMult ?? 1))}/${fmt(def.hp * (r.unitHpMult ?? 1))}/${def.interval / 1000}초 · ${def.ranged ? '원거리' : '근접'}`
+    : '';
+  const state = s.sold ? '구매함' : soldOut ? '품절' : own >= 2 ? `보유 ${own}장 → 사면 강화 가능` : own === 1 ? '보유 1장' : '';
+  return `<div class="${cls.join(' ')}"${s.sold ? '' : ` data-slot="${i}"`} role="button" tabindex="0">
+    <span class="cost gold">${cost}</span>
+    <span class="cname">${esc(def.name)}</span>
+    <span class="ctype">${s.signature ? '<b class="sig">시그니처</b> · ' : ''}${TYPE_NAMES[def.type]} · ${def.tier}등급 · 마나 ${def.cost}${stat ? ` · ${stat}` : ''}</span>
+    <span class="ctext">${esc(def.text || '')}</span>
+    <span class="own">${state}</span>
+  </div>`;
+}
+
+function renderShop() {
+  if (!match) return;
+  const { game } = match;
+  const P = game.players[ME];
+  const O = game.players[OP];
+  const e = game.econ;
+  const info = E.roundInfo(game);
+
+  $('sRound').innerHTML = `${game.round}<small>라운드</small>`;
+  const field = info.battlefield ? `전장: ${E.BATTLEFIELDS[info.battlefield].name} — ${E.BATTLEFIELDS[info.battlefield].text}` : '전장: 없음';
+  $('sInfo').textContent = `다음 전투: ${FORMAT_NAMES[info.format]} · ${field}${info.format === 'duel' ? ` · 지면 HP −${info.baseDamage} − 상대에게 남은 유닛 수` : ' · HP 피해 없음, 이기면 골드 +2'}`;
+
+  // 내 상태
+  const inc = E.incomePreview(game, ME);
+  const need = e.xpToNext[P.level];
+  const streak = P.streak >= 2 ? `${P.streak}연승` : P.streak <= -2 ? `${-P.streak}연패` : '';
+  $('sMe').innerHTML = `
+    <span><span class="big">HP ${Math.max(0, P.hp)}</span> <small>/ ${P.maxHp}</small></span>
+    <span><span class="big gold">${P.gold}골드</span> <small>다음 라운드 +${inc.total} (기본 ${inc.base}${inc.interest ? ` · 이자 ${inc.interest}` : ''}${inc.streak ? ` · 연속 ${inc.streak}` : ''}${inc.commander ? ` · 지휘관 ${inc.commander}` : ''})</small></span>
+    <span><span class="big">레벨 ${P.level}</span> <small>${P.level >= e.maxLevel ? '최대' : `경험치 ${P.xp}/${need}`}</small>${P.level >= e.maxLevel ? '' : `<span class="xpbar"><i style="width:${(P.xp / need) * 100}%"></i></span>`}</span>
+    <span><small>고르는 시작 카드</small> ${E.openingCount(game, ME)}장</span>
+    <span><small>융합</small> ${P.fusionsLeft}회 남음</span>
+    ${streak ? `<span class="gold">${streak}</span>` : ''}`;
+
+  // 상점
+  $('sShop').innerHTML = P.shop.map((s, i) => shopCardHtml(game, P, s, i)).join('');
+  const rc = E.rerollCostOf(game, ME);
+  $('sShopButtons').innerHTML = `
+    <button type="button" data-act="reroll"${P.gold < rc ? ' disabled' : ''}>리롤 (${rc === 0 ? '무료' : `${rc}골드`}) <small>D</small></button>
+    <button type="button" data-act="lock" class="${P.locked ? 'on' : ''}">${P.locked ? '잠금 해제' : '잠금'} <small>다음 라운드에도 유지</small></button>
+    <button type="button" data-act="xp"${P.gold < e.xpCost || P.level >= e.maxLevel ? ' disabled' : ''}>경험치 +${e.xpPerBuy} (${e.xpCost}골드) <small>F</small></button>`;
+
+  // 내 덱
+  $('sDeckInfo').textContent = `${P.deck.length}장 (최소 ${e.deckMin}, 최대 ${e.deckMax}) · ✓ 표시는 시작 손패에 반드시 들어오는 카드`;
+  const fuseBody = match.fuseBody ? P.deck.find((c) => c.key === match.fuseBody) : null;
+  $('sDeck').innerHTML = [...P.deck]
+    .sort((a, b) => E.CARDS[a.id].cost - E.CARDS[b.id].cost || a.id.localeCompare(b.id) || a.key - b.key)
+    .map((c) => {
+      const def = E.CARDS[c.id];
+      const cls = ['chip', def.type, 'pickable'];
+      if (P.opening.includes(c.key)) cls.push('picked');
+      if (match.sel === c.key) cls.push('selected');
+      if (fuseBody && c !== fuseBody) cls.push(E.canFuse(game, ME, fuseBody.key, c.key).ok ? 'fusable' : 'dim');
+      const diamond = def.diamond && !c.fuse ? ` ◆${E.KEYWORD_NAMES[def.diamond]}` : '';
+      return `<span class="${cls.join(' ')}" data-key="${c.key}" role="button" title="${esc(def.text || '')}${diamond}"><b>${def.cost}</b>${esc(E.cardLabel(c))}${P.opening.includes(c.key) ? ' ✓' : ''}</span>`;
+    })
+    .join('');
+
+  // 고른 카드에 할 수 있는 일
+  const actions = [];
+  for (const u of E.upgradable(game, ME)) {
+    actions.push(`<button type="button" data-act="upgrade" data-id="${u.id}" data-stars="${u.stars}" class="primary">${esc(E.CARDS[u.id].name)}${'★'.repeat(u.stars - 1)} 3장 → ${'★'.repeat(u.stars + 1)}로 합치기</button>`);
+  }
+  const sel = P.deck.find((c) => c.key === match.sel);
+  let hint = match.hint;
+  if (fuseBody) {
+    hint = `${E.cardLabel(fuseBody)}에 붙일 재료 카드를 누른다. 보라색 테두리가 쓸 수 있는 재료다. 재료 카드는 사라진다.`;
+    actions.push('<button type="button" data-act="cancelFuse">융합 취소</button>');
+  } else if (sel) {
+    const isOpening = P.opening.includes(sel.key);
+    if (E.openingCount(game, ME) > 0) actions.push(`<button type="button" data-act="opening">${isOpening ? '시작 카드에서 빼기' : '시작 카드로 고르기'}</button>`);
+    const canRemove = P.removesLeft > 0 && P.gold >= e.removeCost && P.deck.length > e.deckMin;
+    actions.push(`<button type="button" data-act="remove"${canRemove ? '' : ' disabled'}>덱에서 빼기 (${e.removeCost}골드${P.removesLeft > 0 ? '' : ', 이번 라운드는 이미 뺌'})</button>`);
+    const canBody = P.fusionsLeft > 0 && !sel.fuse && P.deck.length > e.deckMin;
+    actions.push(`<button type="button" data-act="fuse"${canBody ? '' : ' disabled'}>융합: 이 카드에 효과 붙이기</button>`);
+    if (!hint) hint = `${E.cardLabel(sel)}: ${E.CARDS[sel.id].text || ''}`;
+  } else if (!hint) {
+    hint = '덱의 카드를 누르면 시작 카드 지정, 빼기, 융합을 할 수 있다.';
+  }
+  $('sHint').textContent = hint;
+  $('sDeckActions').innerHTML = actions.join('');
+
+  // 상대 (공개 정보)
+  const oc = E.COMMANDERS[O.commander];
+  const oStreak = O.streak >= 2 ? ` · ${O.streak}연승` : O.streak <= -2 ? ` · ${-O.streak}연패` : '';
+  const spy = E.COMMANDERS[P.commander].seesOpening
+    ? `<div class="pickhint">첩보원 패시브로 본 상대의 시작 카드: ${esc(O.opening.map((k) => E.cardLabel(O.deck.find((c) => c.key === k))).join(', ') || '없음')}</div>`
+    : oc.seesOpening ? '<div><small>상대 첩보원이 내 시작 카드를 미리 본다.</small></div>' : '';
+  $('sOp').innerHTML = `
+    <div><b>${esc(oc.name)}</b> · HP ${Math.max(0, O.hp)}/${O.maxHp} · 레벨 ${O.level}${oStreak}</div>
+    <div><small>패시브: ${esc(oc.passive)} · 상점 성향: ${STYLE_NAMES[match.botStyle]}</small></div>
+    ${spy}
+    <div><small>덱 ${O.deck.length}장</small><div class="decklist">${deckChips(O.deck)}</div></div>
+    <div><small>픽 카드</small><div class="decklist">${O.picks.map((id) => `<span class="chip ${E.CARDS[id].type}">${esc(E.CARDS[id].name)}</span>`).join('')}</div></div>`;
+
+  // 풀
+  $('sPool').innerHTML = `<table>${[...E.POOL_CARD_IDS]
+    .sort((a, b) => E.CARDS[a].tier - E.CARDS[b].tier || E.CARDS[a].cost - E.CARDS[b].cost)
+    .map((id) => `<tr class="${P.picks.includes(id) ? 'mine' : ''}"><td>${E.CARDS[id].tier}등급 ${esc(E.CARDS[id].name)}${P.picks.includes(id) ? ' (내 픽)' : ''}</td><td>${game.pool[id]} / ${game.poolStart[id]}</td></tr>`)
+    .join('')}</table>`;
+
+  // 지난 라운드
+  $('sHistory').innerHTML = [...game.history].reverse().map((h) => {
+    const mine = h.results.find((r) => r.p === ME);
+    const what = mine.won === null ? '무승부' : mine.won ? '승리' : '패배';
+    const tail = h.format === 'practice' ? (mine.gold ? ` · 골드 +${mine.gold}` : '') : ` · HP ${h.hp[ME]} : ${h.hp[OP]}`;
+    return `<li class="${mine.won ? 'p0' : 'p1'}"><time>${h.round}R</time><b>${what}</b> ${h.format === 'practice' ? '연습' : '결투'}${tail}</li>`;
+  }).join('');
+}
+
+// ───────────────────────── 전투와 라운드 결과 ─────────────────────────
+
+function goBattle() {
+  if (!match || match.game.phase !== 'shop' || !$('roundResult').hidden) return;
+  if (match.timerId) clearInterval(match.timerId);
+  match.timerId = null;
+  const { game } = match;
+  const info = E.roundInfo(game);
+  const hpBefore = game.players.map((P) => P.hp);
+  const goldBefore = game.players.map((P) => P.gold);
+  const battles = E.roundBattles(game);
+  const mine = battles.find((b) => b.sides[0] === ME);
+  // 내가 끼지 않는 전투(연습 라운드의 상대 쪽)는 바로 계산한다
+  for (const b of battles) if (b !== mine) b.state = E.runBattle(b.cfg).state;
+  launchBattle({
+    cfg: mine.cfg,
+    // 연습 라운드의 중립 몬스터는 엔진이 정한 느린 봇을 쓴다
+    botOpts: { seed: E.hashSeed(game.seed, 'bot', game.round), ...(mine.cfg.players[1].bot || E.BOT_LEVELS[match.botLevel]) },
+    label: `${game.round}라운드 ${info.format === 'practice' ? '연습' : '결투'}`,
+    onFinish(state) {
+      mine.state = state;
+      const summary = E.finishRound(game, battles);
+      showRoundResult(summary, state, hpBefore, goldBefore);
+    },
+  });
+}
+
+function showRoundResult(summary, state, hpBefore, goldBefore) {
+  const { game } = match;
+  const mine = summary.results.find((r) => r.p === ME);
+  const theirs = summary.results.find((r) => r.p === OP);
+  const over = game.phase === 'over';
+  const title = $('rrTitle');
+  if (over) {
+    title.className = game.winner === ME ? 'win' : game.winner === OP ? 'lose' : '';
+    title.textContent = game.winner === ME ? '경기 승리' : game.winner === OP ? '경기 패배' : '경기 무승부';
+  } else {
+    title.className = mine.won ? 'win' : mine.won === false ? 'lose' : '';
+    title.textContent = `${summary.round}라운드 ${mine.won === null ? '무승부' : mine.won ? '승리' : '패배'}`;
+  }
+  const why = state.result.reason === 'commander' ? '지휘관이 쓰러졌다' : '시간이 다 됐다 (지휘관 체력 비율로 판정)';
+  $('rrDetail').textContent = `${summary.format === 'practice' ? '연습 (HP 피해 없음)' : '결투'} · ${(state.result.timeMs / 1000).toFixed(1)}초 · ${why}`;
+  const [P, O] = game.players;
+  const hp = (i, r) => `${Math.max(0, hpBefore[i])} → ${Math.max(0, game.players[i].hp)}${r.damage ? ` (−${r.damage})` : ''}`;
+  const gold = (i) => `${goldBefore[i]} → ${game.players[i].gold}`;
+  const streak = (X) => (X.streak >= 2 ? `${X.streak}연승` : X.streak <= -2 ? `${-X.streak}연패` : '-');
+  const rows = [
+    ['플레이어 HP', hp(ME, mine), hp(OP, theirs)],
+    ['전투에 남은 유닛', state.result.survivors[0], summary.format === 'practice' ? '-' : state.result.survivors[1]],
+    ['연속', streak(P), streak(O)],
+    ['상점 레벨', P.level, O.level],
+  ];
+  if (!over) rows.splice(1, 0, ['골드 (다음 라운드 수입 포함)', gold(ME), gold(OP)]);
+  $('rrStats').innerHTML = `<tr><th></th><th>나</th><th>상대</th></tr>${rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}`;
+  $('rrButtons').innerHTML = over
+    ? '<button type="button" class="primary" data-act="lobby">새 경기</button>'
+    : '<button type="button" class="primary" data-act="next">다음 라운드 (상점)</button>';
+  $('rrButtons').onclick = (ev) => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    stopBattle();
+    game.phase === 'over' ? (endMatch(), showScreen('lobby')) : beginShop();
+  };
+  $('roundResult').hidden = false;
+}
+
+window.__match = () => match;
+
+// 위의 let/const가 준비된 뒤에 시작한다
+initMatch();

@@ -49,6 +49,7 @@ export function createBattle(cfg) {
     const P = {
       idx,
       commander: pc.commander,
+      name: pc.name || COMMANDERS[pc.commander].name,
       hp: rules.commanderHp,
       maxHp: rules.commanderHp,
       mana: rules.startMana + (bonus.startMana || 0),

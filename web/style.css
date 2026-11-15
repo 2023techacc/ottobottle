@@ -208,3 +208,40 @@ fieldset label select, fieldset label input { width: 100%; min-width: 0; }
   .cell.danger, .cell.hit, .commander.shake .hpbar { animation: none; }
   .float { animation-duration: .01s; }
 }
+
+/* ── 한 경기 모드 ── */
+.modetabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.modetabs[hidden] { display: none; }
+.overlay { position: fixed; inset: 0; background: #000a; display: grid; place-items: center; padding: 16px; }
+.overlay[hidden] { display: none; }
+.sec { font-size: 14px; margin: 14px 0 6px; color: var(--dim); }
+.sec small { font-weight: 400; margin-left: 6px; }
+.shoptimer { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+.shoptimer.low { color: var(--danger); }
+#shop .field { flex: 1; }
+.statusbar {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--me); border-radius: 8px; padding: 8px 12px;
+}
+.statusbar .big { font-size: 18px; font-weight: 700; }
+.statusbar .gold { color: var(--gold); }
+.statusbar small { color: var(--dim); }
+.statusbar .xpbar { display: inline-block; width: 70px; height: 6px; background: #101319; border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 6px; }
+.statusbar .xpbar i { display: block; height: 100%; background: var(--gauge); }
+.card .cost.gold { background: var(--gold); color: #3a2a00; }
+.card .sig { color: var(--gold); font-weight: 600; }
+.card .own { font-size: 11px; color: var(--good); margin-top: auto; }
+.card.sold { opacity: .35; cursor: default; }
+.card.empty { border-style: dashed; cursor: default; opacity: .4; justify-content: center; align-items: center; }
+.chip.selected { box-shadow: 0 0 0 2px var(--me); border-color: var(--me); }
+.chip.fusable { border-color: var(--gauge); box-shadow: 0 0 0 1px var(--gauge); }
+.chip.dim { opacity: .45; }
+#sOp { font-size: 13px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+#sOp .decklist { margin-top: 2px; }
+#sOp small { color: var(--dim); }
+#sPool table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 6px 0 10px; }
+#sPool td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
+#sPool td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+#sPool tr.mine td:first-child { color: var(--gold); }
+details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin: 6px 0; }
+button:disabled { opacity: .45; cursor: default; }

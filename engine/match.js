@@ -26,6 +26,7 @@ export function runBattle(cfg) {
     logEvents: cfg.logEvents === true,
     players: cfg.players.map((pc, i) => ({
       commander: pc.commander,
+      name: pc.name,
       deck: pc.deck,
       seed: pc.seed,
       bonus: pc.bonus,

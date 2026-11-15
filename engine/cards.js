@@ -132,7 +132,7 @@ export const COMMANDERS = {
     fusions: 3,
   },
   merchant: {
-    id: 'merchant', name: '상인', passive: '라운드당 골드 +1, 라운드 첫 리롤 무료 (결투 전투에는 영향 없음)', card: 'invest',
+    id: 'merchant', name: '상인', passive: '라운드당 골드 +1, 라운드 첫 리롤 무료', card: 'invest',
     deck: ['rats', 'rats', 'shield', 'bat', 'archer', 'scout', 'crystal', 'invest'],
     fusions: 3,
   },
@@ -144,11 +144,12 @@ export const COMMANDERS = {
   spy: {
     id: 'spy', name: '첩보원', passive: '상대가 고른 시작 카드를 미리 본다, 시그니처 칸 2개', card: 'disrupt',
     seesOpening: true,
+    signatureSlots: 2,
     deck: ['dagger', 'dagger', 'bat', 'shield', 'firebolt', 'firebolt', 'retreat', 'disrupt'],
     fusions: 3,
   },
   lord: {
-    id: 'lord', name: '군주', passive: '난전 형식에서 받는 HP 피해 −30% (결투 전투에는 영향 없음)', card: 'decree',
+    id: 'lord', name: '군주', passive: '난전 형식에서 받는 HP 피해 −30% (1:1에는 영향 없음)', card: 'decree',
     deck: ['shield', 'shield', 'lancer', 'bat', 'archer', 'armor', 'warcry', 'decree'],
     fusions: 3,
   },

@@ -5,3 +5,5 @@ export * from './battle.js';
 export * from './decks.js';
 export * from './bot.js';
 export * from './match.js';
+export * from './game.js';
+export * from './shopbot.js';
