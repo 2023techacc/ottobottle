@@ -22,11 +22,13 @@ export function runBattle(cfg) {
   const state = createBattle({
     seed: cfg.seed,
     battlefield: cfg.battlefield,
+    format: cfg.format,
     rules: cfg.rules,
     logEvents: cfg.logEvents === true,
     players: cfg.players.map((pc, i) => ({
       commander: pc.commander,
       name: pc.name,
+      boss: pc.boss,
       deck: pc.deck,
       seed: pc.seed,
       bonus: pc.bonus,

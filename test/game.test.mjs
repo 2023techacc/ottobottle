@@ -9,6 +9,7 @@ function mk(o = {}) {
   return E.createGame({
     seed: o.seed ?? 3,
     econ: o.econ,
+    startDecks: 'commander', // 아래 테스트는 지휘관별 시작 덱을 전제로 한다. 드래프트는 draft.test.mjs에서 본다.
     players: [
       { commander: o.c0 || 'general', picks: o.p0 || PICKS_A },
       { commander: o.c1 || 'lord', picks: o.p1 || PICKS_B },
@@ -382,6 +383,8 @@ function botGame(seed, styles = ['balanced', 'balanced']) {
   const players = [0, 1].map(() => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng) }));
   const game = E.createGame({ seed, players });
   const total = E.poolTotal(game);
+  for (const P of game.players) E.runDraftBot(game, P.idx);
+  assert.equal(game.phase, 'shop');
   while (game.phase !== 'over') {
     assert.ok(game.round < 60, '경기가 끝나지 않는다');
     for (const p of [0, 1]) E.runShopBot(game, p, { style: styles[p] });

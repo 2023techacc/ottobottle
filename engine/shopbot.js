@@ -5,6 +5,7 @@ import { CARDS, POOL_CARD_IDS, UNIT_DIAMONDS } from './cards.js';
 import { pickOpening } from './decks.js';
 import {
   buy, reroll, buyXp, removeCard, upgrade, fuse, setOpening, upgradable, canFuse, openingCount, rerollCostOf,
+  claimReward, skipReward, draftPick,
 } from './game.js';
 
 /** 카드 가치 (대략 0~10) */
@@ -41,6 +42,30 @@ export function botPicks(rng, econ) {
   return out;
 }
 
+/** 시작 덱 드래프트를 끝까지 고른다: 가치가 높은 카드 위주로, 유닛이 모자라면 유닛을 먼저 */
+export function runDraftBot(game, p) {
+  const P = game.players[p];
+  for (let guard = 0; guard < 60 && game.phase === 'draft' && P.draft && P.draft.left > 0; guard++) {
+    const units = P.deck.filter((c) => CARDS[c.id].type === 'unit').length;
+    const big = P.deck.filter((c) => CARDS[c.id].cost >= 4).length;
+    let best = 0;
+    let bestScore = -Infinity;
+    P.draft.options.forEach((id, i) => {
+      const def = CARDS[id];
+      let score = CARD_VALUE[id] ?? 3;
+      if (def.type === 'unit' && units < 5) score += 3;
+      if (def.type !== 'unit' && P.deck.length - units >= 3) score -= 3;
+      if (def.cost >= 4 && big >= 1) score -= 3;
+      if (P.deck.some((c) => c.id === id)) score += 1;
+      if (score > bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    });
+    draftPick(game, p, best);
+  }
+}
+
 function valueOf(c) {
   const def = CARDS[c.id];
   let v = CARD_VALUE[c.id] ?? 3;
@@ -56,8 +81,17 @@ function valueOf(c) {
  */
 export function runShopBot(game, p, opts = {}) {
   const P = game.players[p];
+  if (!P.alive || game.phase !== 'shop') return;
   const e = game.econ;
   const style = SHOP_STYLES[opts.style || 'balanced'];
+
+  // 보스 보상: 가치가 가장 높은 카드를 받는다
+  if (P.reward) {
+    const best = P.reward.options
+      .map((id, i) => ({ i, v: game.pool[id] > 0 ? (CARD_VALUE[id] ?? 3) : -1 }))
+      .sort((a, b) => b.v - a.v)[0];
+    if (!best || best.v < 0 || !claimReward(game, p, best.i).ok) skipReward(game, p);
+  }
   // 초반이거나 HP가 위험하면 아끼지 않는다
   const reserve = game.round < 4 || P.hp <= 15 ? 0 : style.reserve;
   let rerolls = 0;

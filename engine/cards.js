@@ -61,6 +61,14 @@ export const CARDS = {
     ult: { kind: 'frontRow', damage: 25, telegraphMs: 1200, gaugeAtk: 20, gaugeHit: 5 },
   }),
 
+  // 보스 레이드의 보스. 풀에는 들어가지 않는다. 패턴은 공개돼 있다: 10초마다 전조 1.5초 뒤 전열 전체를 친다.
+  boss: unit('boss', '고대 골렘', 5, 0, 8, 100000, 1500, false, {
+    special: true,
+    text: '보스. 10초마다 전조 1.5초 뒤 전열 전체에 피해',
+    ccResist: 0.5,
+    ult: { kind: 'frontRow', damage: 16, telegraphMs: 1500, timerMs: 10000, gaugeAtk: 0, gaugeHit: 0 },
+  }),
+
   // ── 주문 ─────────────────────────────────────────────
   firebolt: card('firebolt', '화염탄', 'spell', 1, 1, 'enemyUnit', '적 유닛 하나에 피해 6. 연계: 피해 10', {
     keywords: ['combo'], damage: 6, comboDamage: 10,
@@ -114,13 +122,13 @@ export const CARDS = {
   disrupt: card('disrupt', '교란', 'spell', 2, 3, 'enemyUnit', '적 유닛 하나를 2초간 침묵', {
     commanderCard: 'spy', durationMs: 2000,
   }),
-  decree: card('decree', '포고', 'ops', 2, 3, 'none', '이번 난전에서 내 칸 하나의 표적 방향을 바꾼다', {
+  decree: card('decree', '포고', 'ops', 2, 3, 'column', '이번 난전에서 내 칸 하나의 표적 방향을 바꾼다', {
     commanderCard: 'lord', duelInert: true, meleeOnly: true,
   }),
 };
 
 /** 공용 풀에 들어가는 카드 (지휘관 고유 카드 제외) */
-export const POOL_CARD_IDS = Object.values(CARDS).filter((c) => !c.commanderCard).map((c) => c.id);
+export const POOL_CARD_IDS = Object.values(CARDS).filter((c) => !c.commanderCard && !c.special).map((c) => c.id);
 
 /** 등급별 풀 장수 */
 export const COPIES_BY_TIER = { 1: 12, 2: 10, 3: 8, 4: 6, 5: 4 };

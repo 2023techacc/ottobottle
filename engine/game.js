@@ -1,4 +1,4 @@
-// 한 경기(1:1): 사전 선택 → [상점 → 전투] 반복 → 한쪽 HP가 0이 되면 끝.
+// 한 경기(1:1 또는 8인): 사전 선택 → [상점 → 전투] 반복 → 한 명이 남으면 끝.
 // 여기에는 상점·경제·라운드 진행만 있고, 전투는 battle.js가 맡는다.
 // 난수는 상점에 무엇이 뜨는지에만 쓴다. 같은 시드와 같은 행동이면 결과도 같다.
 
@@ -7,12 +7,41 @@ import { CARDS, COMMANDERS, POOL_CARD_IDS, COPIES_BY_TIER, BATTLEFIELD_IDS, UNIT
 import { SHOP_ODDS } from './decks.js';
 import { PRESETS } from './rules.js';
 
+/** 게임 모드. 인원과 HP·픽 수가 다르다. */
+export const MODES = Object.freeze({
+  duel: { name: '1:1 랭크', players: 2, econ: { playerHp: 40, picks: 8 } },
+  rank8: { name: '8인 랭크', players: 8, econ: { playerHp: 100, picks: 5 } },
+});
+
+/** 8인 로테이션 (기획서 예시). 1~2라운드는 연습, 15라운드부터는 남은 인원에 맞춘다. */
+export const ROTATION = Object.freeze({
+  3: 'duel', 4: 'duel', 5: 'melee3', 6: 'duel', 7: 'alliance', 8: 'duel', 9: 'boss',
+  10: 'melee4', 11: 'duel', 12: 'melee3', 13: 'duel', 14: 'melee4',
+});
+
+export const FORMAT_SIZE = Object.freeze({ duel: 2, melee3: 3, melee4: 4, alliance: 4 });
+
+/** 난전에서 순위별로 받는 피해 비율 (결투 피해 기준) */
+export const MELEE_DAMAGE = Object.freeze({ melee3: [0, 0.5, 1], melee4: [0, 0.3, 0.7, 1] });
+
 export const DEFAULT_ECON = Object.freeze({
-  // 1:1 모드
+  // 아래 두 값은 모드(MODES)가 덮어쓴다
   playerHp: 40,
   picks: 8, // 사전에 고르는 픽 카드 수
+
+  // 보스 레이드 보상: 순위 상위 25%는 카드 4장 중 1장 + 5골드, 그다음 37.5%는 3장 중 1장, 나머지는 2골드
+  bossTop: { share: 0.25, options: 4, gold: 5 },
+  bossMid: { share: 0.625, options: 3, gold: 0 },
+  bossLowGold: 2,
+  lordMeleeDamage: 0.7, // 군주: 난전에서 받는 HP 피해 −30%
   maxTier5Picks: 1,
   pickCopyBonus: 0.5, // 누가 고른 카드는 한 명당 풀 장수 +50%
+
+  // 시작 덱 드래프트: 지휘관 고유 카드 1장 + 3장 중 1장 고르기를 7번
+  // 후보 한 장은 내 픽에서, 나머지는 공용 풀(중립 카드 + 모두의 픽) 전체에서 뜬다.
+  draftPicks: 7,
+  draftOptions: 3,
+  draftOdds: [60, 30, 10, 0, 0], // 등급 1~5가 뜰 확률(%)
 
   // 수입
   baseIncome: 5,
@@ -78,20 +107,30 @@ export function validatePicks(picks, econ = DEFAULT_ECON) {
 /**
  * @param {object} cfg
  * @param {number} cfg.seed
- * @param {Array<{commander:string, picks:string[], name?:string}>} cfg.players  2명
+ * @param {Array<{commander:string, picks:string[], name?:string}>} cfg.players  2~8명
+ * @param {'duel'|'rank8'} [cfg.mode]  기본: 2명이면 duel, 그보다 많으면 rank8
+ * @param {'draft'|'commander'} [cfg.startDecks]  시작 덱을 정하는 방법. 기본은 draft.
+ *   draft: 지휘관 고유 카드 1장만 들고 시작해서 draftPick으로 나머지를 고른다 (다 고르면 1라운드 상점이 열린다).
+ *   commander: 지휘관마다 정해진 시작 덱 8장 (예전 방식)
  * @param {object} [cfg.econ]         DEFAULT_ECON에 덮어쓸 값
  * @param {object} [cfg.battleRules]  전투 규칙 (기본: PRESETS.cards)
  */
 export function createGame(cfg) {
-  const econ = { ...DEFAULT_ECON, ...(cfg.econ || {}) };
+  const mode = cfg.mode || (cfg.players.length === 2 ? 'duel' : 'rank8');
+  const econ = { ...DEFAULT_ECON, ...MODES[mode].econ, ...(cfg.econ || {}) };
   const seed = (cfg.seed ?? 1) >>> 0;
   const game = {
     seed,
+    mode,
+    startDecks: cfg.startDecks || 'draft',
     econ,
+    groups: [], // 이번 라운드의 조 편성 (상점 단계에서 미리 공개)
+    eliminated: [], // 탈락한 순서
+    placements: [], // 경기가 끝나면 1위부터
     // 한 경기에서는 선봉이 없고, 고르는 시작 카드 장수는 상점 레벨이 정한다.
     battleRules: { ...(cfg.battleRules || PRESETS.cards.rules), vanguardSlots: 0, openingPicks: 0 },
     round: 0,
-    phase: 'shop', // 'shop' | 'over'
+    phase: 'shop', // 'draft' | 'shop' | 'over'
     pool: {},
     poolStart: {},
     players: [],
@@ -121,6 +160,11 @@ export function createGame(cfg) {
       picks: [...pc.picks],
       hp: econ.playerHp,
       maxHp: econ.playerHp,
+      alive: true,
+      place: null,
+      eliminatedRound: null,
+      ghost: null, // 탈락할 때의 덱 (유령 보드용)
+      reward: null, // 보스 보상으로 고를 카드 { options: [id] }
       gold: 0,
       level: econ.startLevel,
       xp: 0,
@@ -136,11 +180,18 @@ export function createGame(cfg) {
       rng: makeRng(hashSeed(seed, 'shop', idx)),
       stats: { bought: {}, spent: 0, earned: 0, rerolls: 0, xpBought: 0, removed: 0, fused: 0, upgraded: 0 },
     };
-    P.deck = c.deck.map((id) => newCard(game, id, 'start'));
+    P.deck = game.startDecks === 'draft' ? [newCard(game, c.card, 'start')] : c.deck.map((id) => newCard(game, id, 'start'));
+    P.draft = null;
     game.players.push(P);
   });
 
-  startRound(game);
+  if (game.startDecks === 'draft' && econ.draftPicks > 0) {
+    game.phase = 'draft';
+    for (const P of game.players) {
+      P.draft = { left: econ.draftPicks, options: [] };
+      rollDraftOptions(game, P);
+    }
+  } else startRound(game);
   return game;
 }
 
@@ -153,17 +204,39 @@ function newCard(game, id, origin) {
 // 조회
 // ─────────────────────────────────────────────────────────────
 
+export function aliveCount(game) {
+  return game.players.filter((P) => P.alive).length;
+}
+
+/** 이 라운드의 전투 형식 */
+export function formatOf(game, round = game.round) {
+  const e = game.econ;
+  if (round <= e.practiceRounds) return 'practice';
+  const alive = aliveCount(game);
+  if (game.mode === 'duel' || alive <= 2) return 'duel';
+  const scheduled = ROTATION[round] || (round % 2 === 1 ? 'duel' : 'melee4'); // 15라운드부터 결투와 난투장을 번갈아
+  if (scheduled === 'boss') return 'boss';
+  if (alive === 3) return 'melee3'; // 3명이 남으면 매 라운드 삼파전
+  return scheduled;
+}
+
 /** 이번 라운드의 형식·전장·기본 피해. 상점 단계에서 미리 공개된다. */
 export function roundInfo(game, round = game.round) {
   const e = game.econ;
-  const practice = round <= e.practiceRounds;
+  const format = formatOf(game, round);
+  const quiet = format === 'practice' || format === 'boss'; // 전장 효과도 HP 피해도 없다
   const n = round - e.practiceRounds;
   return {
     round,
-    format: practice ? 'practice' : 'duel',
-    battlefield: practice ? null : makeRng(hashSeed(game.seed, 'field', round)).pick(BATTLEFIELD_IDS),
-    baseDamage: practice ? 0 : Math.min(e.damageMax, e.damageMin + Math.floor((n - 1) / 2)),
+    format,
+    battlefield: quiet ? null : makeRng(hashSeed(game.seed, 'field', round)).pick(BATTLEFIELD_IDS),
+    baseDamage: quiet ? 0 : Math.min(e.damageMax, e.damageMin + Math.floor((n - 1) / 2)),
   };
+}
+
+/** 이번 라운드에 p가 속한 조 */
+export function groupOf(game, p) {
+  return game.groups.find((g) => g.some((m) => m.p === p)) || null;
 }
 
 export function openingCount(game, p) {
@@ -213,6 +286,7 @@ export function upgradable(game, p) {
 export function canFuse(game, p, bodyKey, materialKey) {
   const P = game.players[p];
   if (game.phase !== 'shop') return fail('상점 단계가 아니다');
+  if (!P.alive) return fail('탈락했다');
   if (P.fusionsLeft <= 0) return fail('융합 횟수를 다 썼다');
   const body = P.deck.find((c) => c.key === bodyKey);
   const mat = P.deck.find((c) => c.key === materialKey);
@@ -232,7 +306,8 @@ export function canFuse(game, p, bodyKey, materialKey) {
 export function poolTotal(game) {
   let n = 0;
   for (const id of POOL_CARD_IDS) n += game.pool[id];
-  for (const P of game.players) for (const c of P.deck) n += c.parts.length;
+  // 탈락한 플레이어의 카드는 풀로 돌아갔으므로 세지 않는다
+  for (const P of game.players) if (P.alive) for (const c of P.deck) n += c.parts.length;
   return n;
 }
 
@@ -245,6 +320,7 @@ function startRound(game) {
   game.round++;
   game.phase = 'shop';
   for (const P of game.players) {
+    if (!P.alive) continue;
     const inc = game.round === 1
       ? { base: e.baseIncome, interest: 0, streak: 0, commander: P.commander === 'merchant' ? 1 : 0 }
       : incomePreview(game, P.idx);
@@ -258,6 +334,36 @@ function startRound(game) {
     if (P.locked) P.locked = false; // 잠근 상점은 한 라운드 유지된다
     else rollShop(game, P);
   }
+  game.groups = makeGroups(game);
+}
+
+/**
+ * 조 편성. 살아 있는 플레이어를 섞어 형식의 인원수대로 나누고, 모자란 자리는 유령 보드로 채운다.
+ * 유령은 가장 최근에 탈락한 플레이어의 마지막 덱이고, 탈락자가 없으면 다른 조의 플레이어를 복제한다.
+ * 조원: { p: 플레이어 번호 | null, ghostOf: 복제한 플레이어 번호 | null }
+ */
+function makeGroups(game) {
+  const format = formatOf(game);
+  const alive = game.players.filter((P) => P.alive).map((P) => P.idx);
+  const size = FORMAT_SIZE[format];
+  if (!size) return alive.map((p) => [{ p, ghostOf: null }]); // 연습·보스: 각자
+  const rng = makeRng(hashSeed(game.seed, 'groups', game.round));
+  // 둘만 남으면 번호 순서 그대로 (섞을 필요가 없다)
+  const order = alive.length <= 2 ? alive : rng.shuffle([...alive]);
+  const groups = [];
+  for (let i = 0; i < order.length; i += size) groups.push(order.slice(i, i + size).map((p) => ({ p, ghostOf: null })));
+  const last = groups[groups.length - 1];
+  const recent = [...game.eliminated].reverse();
+  while (last.length < size) {
+    const used = last.map((m) => m.ghostOf ?? m.p);
+    let src = recent.find((q) => !used.includes(q));
+    if (src === undefined) {
+      const others = alive.filter((q) => !used.includes(q));
+      src = others.length ? rng.pick(others) : (recent[0] ?? alive[0]);
+    }
+    last.push({ p: null, ghostOf: src });
+  }
+  return groups;
 }
 
 function gainXp(game, P, amount) {
@@ -271,7 +377,10 @@ function gainXp(game, P, amount) {
 }
 
 function rollTier(rng, level) {
-  const odds = SHOP_ODDS[level];
+  return rollTierFrom(rng, SHOP_ODDS[level]);
+}
+
+function rollTierFrom(rng, odds) {
   let x = rng() * 100;
   for (let i = 0; i < odds.length; i++) {
     x -= odds[i];
@@ -280,8 +389,8 @@ function rollTier(rng, level) {
   return 1;
 }
 
-function rollSlot(game, P, signature) {
-  const tier = rollTier(P.rng, P.level);
+function rollSlot(game, P, signature, odds = null) {
+  const tier = odds ? rollTierFrom(P.rng, odds) : rollTier(P.rng, P.level);
   const source = signature ? P.picks : POOL_CARD_IDS;
   // 해당 등급에 카드가 없으면 가장 가까운 낮은 등급, 그것도 없으면 높은 등급
   const order = [];
@@ -308,13 +417,59 @@ function rollShop(game, P) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 시작 덱 드래프트
+// ─────────────────────────────────────────────────────────────
+
+/** 드래프트 후보: 첫 장은 내 픽에서, 나머지는 공용 풀 전체에서. 되도록 서로 다른 카드가 뜬다. */
+function rollDraftOptions(game, P) {
+  const e = game.econ;
+  const out = [];
+  for (let i = 0; i < e.draftOptions; i++) {
+    let pick = null;
+    for (let tries = 0; tries < 8; tries++) {
+      const s = rollSlot(game, P, i === 0, e.draftOdds);
+      if (!s) break;
+      pick = s.id;
+      if (!out.includes(pick)) break;
+    }
+    if (pick) out.push(pick);
+  }
+  P.draft.options = out;
+}
+
+/** 드래프트 후보 중 하나를 시작 덱에 넣는다. 모두가 다 고르면 1라운드 상점이 열린다. */
+export function draftPick(game, p, index) {
+  if (game.phase !== 'draft') return fail('드래프트 단계가 아니다');
+  const P = game.players[p];
+  if (!P.draft || P.draft.left <= 0) return fail('이미 다 골랐다');
+  const id = P.draft.options[index];
+  if (!id) return fail('고를 수 없는 카드');
+  if (game.pool[id] <= 0) {
+    rollDraftOptions(game, P); // 다른 사람이 먼저 다 가져갔다
+    return fail('품절');
+  }
+  game.pool[id]--;
+  const c = newCard(game, id, 'pool');
+  P.deck.push(c);
+  P.draft.left--;
+  if (P.draft.left > 0) rollDraftOptions(game, P);
+  else P.draft.options = [];
+  if (game.players.every((Q) => Q.draft.left <= 0)) startRound(game);
+  return { ok: true, card: c };
+}
+
+// ─────────────────────────────────────────────────────────────
 // 상점 행동
 // ─────────────────────────────────────────────────────────────
 
-const inShop = (game) => (game.phase === 'shop' ? OK : fail('상점 단계가 아니다'));
+const inShop = (game, p) => {
+  if (game.phase !== 'shop') return fail('상점 단계가 아니다');
+  if (p !== undefined && !game.players[p].alive) return fail('탈락했다');
+  return OK;
+};
 
 export function buy(game, p, slot) {
-  const chk = inShop(game);
+  const chk = inShop(game, p);
   if (!chk.ok) return chk;
   const P = game.players[p];
   const s = P.shop[slot];
@@ -334,7 +489,7 @@ export function buy(game, p, slot) {
 }
 
 export function reroll(game, p) {
-  const chk = inShop(game);
+  const chk = inShop(game, p);
   if (!chk.ok) return chk;
   const P = game.players[p];
   const cost = rerollCostOf(game, p);
@@ -349,7 +504,7 @@ export function reroll(game, p) {
 }
 
 export function toggleLock(game, p) {
-  const chk = inShop(game);
+  const chk = inShop(game, p);
   if (!chk.ok) return chk;
   const P = game.players[p];
   P.locked = !P.locked;
@@ -357,7 +512,7 @@ export function toggleLock(game, p) {
 }
 
 export function buyXp(game, p) {
-  const chk = inShop(game);
+  const chk = inShop(game, p);
   if (!chk.ok) return chk;
   const P = game.players[p];
   const e = game.econ;
@@ -371,7 +526,7 @@ export function buyXp(game, p) {
 }
 
 export function removeCard(game, p, key) {
-  const chk = inShop(game);
+  const chk = inShop(game, p);
   if (!chk.ok) return chk;
   const P = game.players[p];
   const e = game.econ;
@@ -392,7 +547,7 @@ export function removeCard(game, p, key) {
 
 /** 같은 카드·같은 별 3장을 한 단계 위 1장으로 합친다. 붙인 융합 효과는 남는다. */
 export function upgrade(game, p, id, stars) {
-  const chk = inShop(game);
+  const chk = inShop(game, p);
   if (!chk.ok) return chk;
   const P = game.players[p];
   if (stars >= 3) return fail('3성이 최대다');
@@ -444,32 +599,104 @@ function sideConfig(game, P) {
   return { commander: P.commander, name: P.name, deck, opening, bonus: { openingPicks: openingCount(game, P.idx) } };
 }
 
+/** 유령 보드: 탈락자는 마지막 덱, 살아 있는 플레이어는 지금 덱을 복제한다. 봇이 대신 싸운다. */
+function ghostConfig(game, q) {
+  const Q = game.players[q];
+  const base = Q.alive ? sideConfig(game, Q) : Q.ghost;
+  return { ...base, name: `${Q.name}의 유령` };
+}
+
 /**
- * 이번 라운드에 치를 전투 목록.
- *   연습 라운드: 플레이어마다 중립 몬스터와 한 판씩 (sides: [p, null])
- *   결투: 두 플레이어가 한 판 (sides: [0, 1])
- * cfg는 createBattle / runBattle에 그대로 넘기면 된다.
+ * 이번 라운드에 치를 전투 목록 (game.groups 순서).
+ *   kind: 'practice' | 'boss' | 'duel' | 'melee3' | 'melee4' | 'alliance'
+ *   sides: 전투의 자리마다 플레이어 번호. 유령·중립 몬스터·보스 자리는 null.
+ *   ghosts: 자리마다 복제한 플레이어 번호 (유령이 아니면 null)
+ * cfg는 createBattle / runBattle에 그대로 넘기면 된다. 연합전은 앞의 두 자리와 뒤의 두 자리가 한 팀이다.
  */
 export function roundBattles(game) {
   const info = roundInfo(game);
   const base = { battlefield: info.battlefield, rules: game.battleRules };
-  if (info.format === 'practice') {
-    const monster = MONSTER_DECKS[Math.min(game.round, 2)].map((id) => ({ id }));
-    return game.players.map((P) => ({
-      kind: 'practice',
-      sides: [P.idx, null],
+  return game.groups.map((group, gi) => {
+    const first = group[0].p;
+    if (info.format === 'practice') {
+      const monster = MONSTER_DECKS[Math.min(game.round, 2)].map((id) => ({ id }));
+      return {
+        kind: 'practice',
+        sides: [first, null],
+        ghosts: [null, null],
+        cfg: {
+          ...base,
+          seed: hashSeed(game.seed, 'battle', game.round, first),
+          players: [sideConfig(game, game.players[first]), { commander: 'merchant', name: '중립 몬스터', deck: monster, opening: [], bot: MONSTER_BOT }],
+        },
+      };
+    }
+    if (info.format === 'boss') {
+      return {
+        kind: 'boss',
+        sides: [first, null],
+        ghosts: [null, null],
+        cfg: {
+          ...base,
+          format: 'boss',
+          // 모두 같은 보스와 싸우므로 시드에는 라운드만 넣는다 (덱 섞기는 플레이어 자리마다 다르다)
+          seed: hashSeed(game.seed, 'battle', game.round, first),
+          players: [sideConfig(game, game.players[first]), { commander: 'merchant', name: '고대 골렘', deck: [], opening: [], boss: true }],
+        },
+      };
+    }
+    return {
+      kind: info.format,
+      sides: group.map((m) => m.p),
+      ghosts: group.map((m) => m.ghostOf),
       cfg: {
         ...base,
-        seed: hashSeed(game.seed, 'battle', game.round, P.idx),
-        players: [sideConfig(game, P), { commander: 'merchant', name: '중립 몬스터', deck: monster, opening: [], bot: MONSTER_BOT }],
+        format: info.format,
+        seed: hashSeed(game.seed, 'battle', game.round, gi),
+        players: group.map((m) => (m.p !== null ? sideConfig(game, game.players[m.p]) : ghostConfig(game, m.ghostOf))),
       },
-    }));
+    };
+  });
+}
+
+function addGold(P, gold) {
+  P.gold += gold;
+  P.stats.earned += gold;
+}
+
+function bumpStreak(P, won) {
+  if (won === true) P.streak = P.streak > 0 ? P.streak + 1 : 1;
+  else if (won === false) P.streak = P.streak < 0 ? P.streak - 1 : -1;
+}
+
+/** 보스 보상으로 고를 카드 후보: 상점과 같은 등급 확률로, 서로 다른 카드 n장 */
+function rollRewardOptions(game, P, n) {
+  const out = [];
+  for (let tries = 0; tries < n * 6 && out.length < n; tries++) {
+    const s = rollSlot(game, P, false);
+    if (s && !out.includes(s.id)) out.push(s.id);
   }
-  return [{
-    kind: 'duel',
-    sides: [0, 1],
-    cfg: { ...base, seed: hashSeed(game.seed, 'battle', game.round), players: game.players.map((P) => sideConfig(game, P)) },
-  }];
+  return out;
+}
+
+/** 보스 보상 카드를 받는다 (무료). 덱이 가득 찼거나 품절이면 받을 수 없다. */
+export function claimReward(game, p, index) {
+  const P = game.players[p];
+  if (!P.reward) return fail('받을 보상이 없다');
+  const id = P.reward.options[index];
+  if (!id) return fail('고를 수 없는 카드');
+  if (P.deck.length >= game.econ.deckMax) return fail(`덱은 최대 ${game.econ.deckMax}장`);
+  if (game.pool[id] <= 0) return fail('품절');
+  game.pool[id]--;
+  const c = newCard(game, id, 'pool');
+  P.deck.push(c);
+  P.reward = null;
+  return { ok: true, card: c };
+}
+
+export function skipReward(game, p) {
+  game.players[p].reward = null;
+  return OK;
 }
 
 /**
@@ -480,50 +707,152 @@ export function roundBattles(game) {
 export function finishRound(game, battles) {
   const e = game.econ;
   const info = roundInfo(game);
-  const summary = { round: game.round, format: info.format, battlefield: info.battlefield, results: [] };
+  const summary = { round: game.round, format: info.format, battlefield: info.battlefield, results: [], groups: game.groups };
+  const out = (r) => summary.results.push(r);
+  const hit = (P, damage) => {
+    P.hp -= damage;
+    return damage;
+  };
 
-  for (const b of battles) {
+  battles.forEach((b, gi) => {
     const res = b.state.result;
+    const bs = b.state.players; // 전투 안의 플레이어 (자리 순서)
+
     if (b.kind === 'practice') {
       const P = game.players[b.sides[0]];
       const won = res.winner === 0;
       let gold = 0;
       if (won) gold += e.practiceWinGold;
-      if (won && b.state.players[0].invested) gold += e.investGold;
-      P.gold += gold;
-      P.stats.earned += gold;
-      summary.results.push({ p: P.idx, kind: 'practice', won, damage: 0, gold, timeMs: res.timeMs });
-      continue;
+      if (won && bs[0].invested) gold += e.investGold;
+      addGold(P, gold);
+      out({ p: P.idx, kind: 'practice', group: gi, won, damage: 0, gold, timeMs: res.timeMs });
+      return;
     }
-    const [A, B] = game.players;
-    if (res.winner === -1) {
-      const dmg = Math.ceil(info.baseDamage / 2);
-      for (const P of [A, B]) {
-        P.hp -= dmg;
-        P.streak = 0;
-        summary.results.push({ p: P.idx, kind: 'duel', won: null, damage: dmg, gold: 0, timeMs: res.timeMs });
+
+    if (b.kind === 'boss') {
+      const P = game.players[b.sides[0]];
+      out({ p: P.idx, kind: 'boss', group: gi, won: null, damage: 0, gold: 0, timeMs: res.timeMs, bossDamage: res.bossDamage[0] });
+      return;
+    }
+
+    if (b.kind === 'duel') {
+      if (res.winner === -1) {
+        const dmg = Math.ceil(info.baseDamage / 2);
+        b.sides.forEach((p) => {
+          if (p === null) return; // 유령은 피해를 받지 않는다
+          const P = game.players[p];
+          hit(P, dmg);
+          P.streak = 0;
+          out({ p, kind: 'duel', group: gi, won: null, damage: dmg, gold: 0, timeMs: res.timeMs });
+        });
+        return;
       }
-    } else {
-      const W = game.players[res.winner];
-      const L = game.players[1 - res.winner];
-      const dmg = info.baseDamage + res.survivors[res.winner];
-      L.hp -= dmg;
-      W.streak = W.streak > 0 ? W.streak + 1 : 1;
-      L.streak = L.streak < 0 ? L.streak - 1 : -1;
-      const gold = b.state.players[res.winner].invested ? e.investGold : 0;
-      W.gold += gold;
-      W.stats.earned += gold;
-      summary.results.push({ p: W.idx, kind: 'duel', won: true, damage: 0, gold, timeMs: res.timeMs });
-      summary.results.push({ p: L.idx, kind: 'duel', won: false, damage: dmg, gold: 0, timeMs: res.timeMs });
+      const w = res.winner;
+      const l = 1 - w;
+      const dmg = info.baseDamage + res.survivors[w];
+      if (b.sides[w] !== null) {
+        const W = game.players[b.sides[w]];
+        bumpStreak(W, true);
+        const gold = bs[w].invested ? e.investGold : 0;
+        addGold(W, gold);
+        out({ p: W.idx, kind: 'duel', group: gi, won: true, damage: 0, gold, timeMs: res.timeMs });
+      }
+      if (b.sides[l] !== null) {
+        const L = game.players[b.sides[l]];
+        hit(L, dmg);
+        bumpStreak(L, false);
+        out({ p: L.idx, kind: 'duel', group: gi, won: false, damage: dmg, gold: 0, timeMs: res.timeMs });
+      }
+      return;
     }
+
+    if (b.kind === 'alliance') {
+      // 진 팀의 두 명이 각자 결투 피해의 절반을 받는다. 남은 유닛은 이긴 팀 전원의 것을 센다.
+      const teamOf = (i) => Math.floor(i / 2);
+      const wt = res.winnerTeam;
+      const winnersUnits = wt < 0 ? 0 : res.survivors.reduce((sum, n, i) => (teamOf(i) === wt ? sum + n : sum), 0);
+      b.sides.forEach((p, i) => {
+        if (p === null) return;
+        const P = game.players[p];
+        const won = wt < 0 ? null : teamOf(i) === wt;
+        let dmg = 0;
+        if (won === null) dmg = Math.ceil(info.baseDamage / 4);
+        else if (!won) dmg = Math.ceil((info.baseDamage + winnersUnits) / 2);
+        hit(P, dmg);
+        if (won === null) P.streak = 0;
+        else bumpStreak(P, won);
+        const gold = won && bs[i].invested ? e.investGold : 0;
+        addGold(P, gold);
+        out({ p, kind: 'alliance', group: gi, won, damage: dmg, gold, timeMs: res.timeMs, rank: res.ranks[i], team: teamOf(i) });
+      });
+      return;
+    }
+
+    // 난전: 순위에 따라 결투 피해의 일부를 받는다. 남은 유닛은 살아남은 상대 전원의 것을 센다.
+    const pctTable = MELEE_DAMAGE[b.kind];
+    const lastRank = Math.max(...res.ranks);
+    b.sides.forEach((p, i) => {
+      if (p === null) return;
+      const P = game.players[p];
+      const rank = res.ranks[i];
+      const foes = res.survivors.reduce((sum, n, j) => (j !== i && !bs[j].dead ? sum + n : sum), 0);
+      let dmg = Math.ceil((info.baseDamage + foes) * pctTable[rank]);
+      if (P.commander === 'lord') dmg = Math.ceil(dmg * e.lordMeleeDamage);
+      hit(P, dmg);
+      const won = rank === 0 ? true : rank === lastRank ? false : null;
+      bumpStreak(P, won);
+      const gold = rank === 0 && bs[i].invested ? e.investGold : 0;
+      addGold(P, gold);
+      out({ p, kind: b.kind, group: gi, won, damage: dmg, gold, timeMs: res.timeMs, rank });
+    });
+  });
+
+  // 보스 레이드: 보스에게 준 피해 순위로 보상
+  if (info.format === 'boss') {
+    const ranked = summary.results.filter((r) => r.kind === 'boss').sort((a, b) => b.bossDamage - a.bossDamage || a.p - b.p);
+    const n = ranked.length;
+    ranked.forEach((r, i) => {
+      const P = game.players[r.p];
+      r.rank = i;
+      if (i < Math.ceil(n * e.bossTop.share)) {
+        P.reward = { options: rollRewardOptions(game, P, e.bossTop.options) };
+        r.gold = e.bossTop.gold;
+      } else if (i < Math.ceil(n * e.bossMid.share)) {
+        P.reward = { options: rollRewardOptions(game, P, e.bossMid.options) };
+        r.gold = e.bossMid.gold;
+      } else {
+        r.gold = e.bossLowGold;
+      }
+      r.rewardOptions = P.reward ? P.reward.options.length : 0;
+      addGold(P, r.gold);
+    });
   }
+
+  // 탈락: 이번 라운드에 HP가 0이 된 플레이어. 여럿이면 HP가 더 많이 남은 쪽이 순위가 높다.
+  const before = game.players.filter((P) => P.alive);
+  const out0 = before.filter((P) => P.hp <= 0).sort((A, B) => B.hp - A.hp || A.idx - B.idx);
+  const survivors = before.length - out0.length;
+  out0.forEach((P, i) => {
+    P.place = survivors + 1 + i;
+    P.eliminatedRound = game.round;
+    P.ghost = sideConfig(game, P);
+    P.alive = false;
+    P.reward = null;
+    for (const c of P.deck) for (const id of c.parts) game.pool[id]++; // 카드는 풀로 돌아간다 (덱 목록은 기록으로 남긴다)
+    game.eliminated.push(P.idx);
+  });
   summary.hp = game.players.map((P) => Math.max(0, P.hp));
+  summary.eliminated = out0.map((P) => P.idx);
   game.history.push(summary);
 
-  const [A, B] = game.players;
-  if (A.hp <= 0 || B.hp <= 0) {
+  if (survivors <= 1) {
+    const left = game.players.find((P) => P.alive);
+    if (left) left.place = 1;
     game.phase = 'over';
-    game.winner = A.hp === B.hp ? -1 : A.hp > B.hp ? 0 : 1;
+    game.placements = [...game.players].sort((A, B) => A.place - B.place || A.idx - B.idx).map((P) => P.idx);
+    // 마지막 남은 사람이 이긴다. 남은 사람들이 한꺼번에 쓰러졌으면 HP가 더 많이 남은 쪽, 그것도 같으면 무승부(-1).
+    if (left) game.winner = left.idx;
+    else game.winner = out0.length >= 2 && out0[0].hp === out0[1].hp ? -1 : out0[0].idx;
     summary.over = true;
     return summary;
   }

@@ -22,6 +22,10 @@ const ROWS = [FRONT, BACK];
  *   bonus?:{startMana?:number, maxMana?:number, startHand?:number, openingPicks?:number}}>} cfg.players
  *   bonus는 한쪽에만 주는 덧셈 보너스다 (상점 레벨 보상을 흉내 낼 때 쓴다).
  * @param {string|null} [cfg.battlefield]
+ * @param {'duel'|'melee3'|'melee4'|'alliance'|'boss'} [cfg.format]  기본은 duel
+ *   melee3·melee4: 3~4명이 각자 싸운다. 유닛이 어느 상대를 칠지는 서 있는 칸 번호로 정해진다.
+ *   alliance: 4명, 앞의 두 명과 뒤의 두 명이 한 팀. 두 보드가 이어져 8칸 전선이 된다.
+ *   boss: players[1]에 { boss: true }를 주면 보스 유닛 하나가 놓인다.
  * @param {object} [cfg.rules]  DEFAULT_RULES에 덮어쓸 값
  * @param {boolean} [cfg.logEvents]  false면 이벤트 기록을 끈다 (대량 시뮬레이션용)
  */
@@ -35,8 +39,9 @@ export function createBattle(cfg) {
     over: false,
     result: null,
     battlefield: cfg.battlefield || null,
+    format: cfg.format || 'duel',
     players: [],
-    board: [emptyBoard(), emptyBoard()],
+    board: cfg.players.map(() => emptyBoard()),
     telegraphs: [],
     events: [],
     logEvents: cfg.logEvents !== false,
@@ -48,6 +53,13 @@ export function createBattle(cfg) {
     const bonus = pc.bonus || {};
     const P = {
       idx,
+      // 연합전은 0·1번이 한 팀, 2·3번이 한 팀. 그 밖에는 각자 한 팀이다.
+      team: (cfg.format === 'alliance') ? Math.floor(idx / 2) : idx,
+      seat: (cfg.format === 'alliance') ? idx % 2 : 0, // 연합전에서 팀 안의 자리 (전선의 왼쪽·오른쪽 절반)
+      dead: false,
+      deadAt: null,
+      isBoss: Boolean(pc.boss),
+      slotDir: {}, // 포고로 바꾼 칸의 표적 방향
       commander: pc.commander,
       name: pc.name || COMMANDERS[pc.commander].name,
       hp: rules.commanderHp,
@@ -110,10 +122,19 @@ export function createBattle(cfg) {
     for (let i = 0; i < startHand; i++) drawCard(state, P);
   });
 
+  // 보스: 지휘관은 쓰러지지 않고, 보스 유닛 하나가 전열에 선다.
+  for (const P of state.players) {
+    if (!P.isBoss) continue;
+    P.hp = 1e9;
+    P.maxHp = 1e9;
+    summonUnit(state, P.idx, FRONT, 1, { id: 'boss' });
+  }
+
   // 첩보원: 상대가 고른 시작 카드를 미리 본다. 그 밖의 지휘관에게는 비공개다.
   for (const P of state.players) {
-    const enemy = state.players[1 - P.idx];
-    P.knownEnemyOpening = COMMANDERS[P.commander].seesOpening ? enemy.openingCards : null;
+    P.knownEnemyOpening = COMMANDERS[P.commander].seesOpening
+      ? state.players.filter((Q) => isEnemy(state, P.idx, Q.idx)).flatMap((Q) => Q.openingCards.map((c) => ({ ...c, owner: Q.idx })))
+      : null;
   }
   return state;
 }
@@ -138,7 +159,7 @@ export function allUnits(state) {
   const out = [];
   for (const row of ROWS) {
     for (let slot = 0; slot < SLOTS; slot++) {
-      for (let p = 0; p < 2; p++) {
+      for (let p = 0; p < state.board.length; p++) {
         const u = state.board[p][row][slot];
         if (u) out.push(u);
       }
@@ -159,7 +180,7 @@ export function unitsOf(state, p) {
 }
 
 export function findUnit(state, id) {
-  for (let p = 0; p < 2; p++) {
+  for (let p = 0; p < state.board.length; p++) {
     for (const row of ROWS) {
       for (let slot = 0; slot < SLOTS; slot++) {
         const u = state.board[p][row][slot];
@@ -252,31 +273,101 @@ export function effectiveCost(state, p, c) {
  * 4. 거리가 같으면 번호가 낮은 칸
  * 적 보드에 유닛이 하나도 없으면 지휘관을 친다.
  */
+/** 서로 적인가 (같은 팀이 아니고, 자기 자신도 아니다) */
+export function isEnemy(state, a, b) {
+  return a !== b && state.players[a].team !== state.players[b].team;
+}
+
+/** 아직 지휘관이 살아 있는 적 플레이어들. 내 자리에서 시계 방향 순서라서 누구에게나 같은 기준이 된다. */
+export function enemiesOf(state, p) {
+  const out = [];
+  const n = state.players.length;
+  for (let k = 1; k < n; k++) {
+    const Q = state.players[(p + k) % n];
+    if (!Q.dead && isEnemy(state, p, Q.idx)) out.push(Q.idx);
+  }
+  return out;
+}
+
+/**
+ * 난전에서 칸 번호가 정하는 표적 방향. 자리는 시계 방향으로 0,1,2(,3)번이고,
+ * 돌려주는 값은 "내 자리에서 몇 칸 떨어진 상대인가"다 (1 왼쪽, 2 정면, 3 오른쪽).
+ *   삼파전: 칸 1~2는 왼쪽(1), 칸 3~4는 오른쪽(2)
+ *   난투장: 칸 1은 왼쪽(1), 칸 2~3은 정면(2), 칸 4는 오른쪽(3)
+ */
+export function slotDirection(state, p, slot) {
+  const P = state.players[p];
+  if (P.slotDir[slot] !== undefined) return P.slotDir[slot];
+  if (state.format === 'melee3') return slot < 2 ? 1 : 2;
+  if (state.format === 'melee4') return slot === 0 ? 1 : slot === 3 ? 3 : 2;
+  return 1;
+}
+
+/**
+ * 이 칸의 유닛이 치는 상대 플레이어. 그 상대의 지휘관이 쓰러졌으면 시계 방향으로 다음 살아 있는 상대.
+ * 칠 상대가 없으면 -1. (연합전은 팀 전체가 표적이라 이 함수를 쓰지 않는다)
+ */
+export function targetPlayer(state, p, slot) {
+  const n = state.players.length;
+  let q = (p + slotDirection(state, p, slot)) % n;
+  for (let k = 0; k < n; k++) {
+    if (!state.players[q].dead && isEnemy(state, p, q)) return q;
+    q = (q + 1) % n;
+  }
+  return -1;
+}
+
+/** 전선에서의 칸 번호. 연합전은 두 보드가 이어져 0~7이 된다. */
+function lineSlot(state, p, slot) {
+  return state.format === 'alliance' ? state.players[p].seat * SLOTS + slot : slot;
+}
+
 export function pickTarget(state, u) {
-  const enemy = 1 - u.owner;
+  let pool;
+  let commander;
+  if (state.format === 'alliance') {
+    pool = enemiesOf(state, u.owner);
+    if (!pool.length) return null;
+    // 적 보드가 다 비면 마주 보는 쪽 지휘관을, 그가 쓰러졌으면 남은 지휘관을 친다
+    const seat = state.players[u.owner].seat;
+    commander = pool.find((q) => state.players[q].seat === seat) ?? pool[0];
+  } else {
+    const q = targetPlayer(state, u.owner, u.slot);
+    if (q < 0) return null;
+    pool = [q];
+    commander = q;
+  }
+  const mine = lineSlot(state, u.owner, u.slot);
   const order = hasKw(u, 'assassin') ? [BACK, FRONT] : [FRONT, BACK];
   let anyAlive = false;
-  for (const row of ROWS) {
-    for (let s = 0; s < SLOTS; s++) {
-      const x = state.board[enemy][row][s];
-      if (x && !x.dying) anyAlive = true;
+  for (const q of pool) {
+    for (const row of ROWS) {
+      for (let s = 0; s < SLOTS; s++) {
+        const x = state.board[q][row][s];
+        if (x && !x.dying) anyAlive = true;
+      }
     }
   }
   for (const row of order) {
     let best = null;
     let bestD = Infinity;
-    for (let s = 0; s < SLOTS; s++) {
-      const x = state.board[enemy][row][s];
-      if (!targetable(state, x)) continue;
-      const d = Math.abs(s - u.slot);
-      if (d < bestD) {
-        best = x;
-        bestD = d;
+    let bestG = Infinity;
+    for (const q of pool) {
+      for (let s = 0; s < SLOTS; s++) {
+        const x = state.board[q][row][s];
+        if (!targetable(state, x)) continue;
+        const g = lineSlot(state, q, s);
+        const d = Math.abs(g - mine);
+        if (d < bestD || (d === bestD && g < bestG)) {
+          best = x;
+          bestD = d;
+          bestG = g;
+        }
       }
     }
     if (best) return { unit: best };
   }
-  if (!anyAlive) return { commander: enemy };
+  if (!anyAlive) return { commander };
   return null; // 안개에 가려진 유닛만 남은 경우
 }
 
@@ -403,6 +494,7 @@ function dealDamage(state, target, amount, opts = {}) {
 
   target.hp -= amount;
   dealt += amount;
+  if (opts.source && opts.source.owner !== target.owner) target.damageTaken = (target.damageTaken || 0) + amount;
   if (opts.source && opts.source.owner !== target.owner) state.players[opts.source.owner].stats.unitDamage += amount;
   if (target.ult && !target.telegraphing && state.timeMs >= target.silenceUntil) gainGauge(state, target, target.ult.gaugeHit);
   emit(state, {
@@ -415,6 +507,7 @@ function dealDamage(state, target, amount, opts = {}) {
 
 function damageCommander(state, p, amount, source) {
   const P = state.players[p];
+  if (state.format === 'boss') return; // 보스 레이드에서는 지휘관이 피해를 받지 않는다 (40초를 채운다)
   amount *= state.rules.commanderDamageMult;
   P.hp -= amount;
   if (source) state.players[source.owner].stats.commanderDamage += amount;
@@ -502,6 +595,8 @@ export function step(state) {
   for (const u of allUnits(state)) {
     if (u.buffs.length) u.buffs = u.buffs.filter((b) => b.until === undefined || b.until > t);
     if (u.slows.length) u.slows = u.slows.filter((x) => x > t);
+    // 보스처럼 시간으로 차는 필살기
+    if (u.ult && u.ult.timerMs) u.gauge = Math.min(r.gaugeMax, u.gauge + (r.gaugeMax * dt) / u.ult.timerMs);
   }
 
   if (state.battlefield === 'volcano' && t % 10000 === 0) {
@@ -516,6 +611,7 @@ export function step(state) {
 }
 
 function tickPlayer(state, P, dt) {
+  if (P.dead || P.isBoss) return;
   const r = state.rules;
   const t = state.timeMs;
   P.maxMana = Math.min(r.maxManaCap, r.startMaxMana + Math.floor(t / r.maxManaIntervalMs)) + P.maxManaBonus;
@@ -547,7 +643,7 @@ function tickPlayer(state, P, dt) {
 /** 후열에 선 근접 유닛은 공격하지 못하고, 빈 전열 칸이 생기면 앞으로 나온다. */
 function advanceMelee(state, dt) {
   const r = state.rules;
-  for (let p = 0; p < 2; p++) {
+  for (let p = 0; p < state.board.length; p++) {
     const b = state.board[p];
     for (let slot = 0; slot < SLOTS; slot++) {
       const u = b[BACK][slot];
@@ -683,7 +779,6 @@ function removeUnit(state, u, died) {
 
 function triggerUlt(state, u) {
   const ult = u.ult;
-  const enemy = 1 - u.owner;
   if (ult.kind === 'tripleShot') {
     u.tripleShot = true;
     u.gauge = 0;
@@ -691,9 +786,10 @@ function triggerUlt(state, u) {
     return;
   }
   let cells;
+  const tg = pickTarget(state, u);
+  if (!tg || !tg.unit) return; // 칠 유닛이 없으면 게이지를 쥐고 기다린다
+  const enemy = tg.unit.owner; // 범위는 표적이 선 보드 안에서만 잡힌다
   if (ult.kind === 'cross') {
-    const tg = pickTarget(state, u);
-    if (!tg || !tg.unit) return; // 칠 유닛이 없으면 게이지를 쥐고 기다린다
     const { row, slot } = tg.unit;
     cells = [{ row, slot }];
     if (slot > 0) cells.push({ row, slot: slot - 1 });
@@ -717,29 +813,70 @@ function triggerUlt(state, u) {
 }
 
 function checkEnd(state) {
-  const [a, b] = state.players;
-  const aDead = a.hp <= EPS;
-  const bDead = b.hp <= EPS;
-  let winner = null;
-  let reason = null;
-  if (aDead || bDead) {
-    winner = aDead && bDead ? -1 : aDead ? 1 : 0;
-    reason = 'commander';
-  } else if (state.timeMs >= state.rules.battleMs) {
-    const ra = a.hp / a.maxHp;
-    const rb = b.hp / b.maxHp;
-    winner = Math.abs(ra - rb) < EPS ? -1 : ra > rb ? 0 : 1;
-    reason = 'time';
+  const t = state.timeMs;
+
+  // 이번 틱에 지휘관이 쓰러진 플레이어: 유닛이 사라지고 더는 카드를 내지 못한다
+  const fallen = state.players.filter((P) => !P.dead && P.hp <= EPS);
+  for (const P of fallen) {
+    P.dead = true;
+    P.deadAt = t;
   }
-  if (winner === null) return;
+  for (const P of fallen) {
+    for (const u of unitsOf(state, P.idx)) removeUnit(state, u, false);
+    state.telegraphs = state.telegraphs.filter((g) => g.owner !== P.idx && g.side !== P.idx);
+    emit(state, { type: 'commanderDown', p: P.idx });
+  }
+
+  const teamsAlive = new Set(state.players.filter((P) => !P.dead).map((P) => P.team));
+  const timeUp = t >= state.rules.battleMs;
+  if (teamsAlive.size > 1 && !timeUp) return;
+
+  // 순위: 살아 있는 쪽이 위(지휘관 체력 비율 순), 쓰러진 쪽은 늦게 쓰러진 순. 같으면 공동 순위.
+  const key = (P) => (P.dead ? [0, P.deadAt] : [1, P.hp / P.maxHp]);
+  const cmp = (A, B) => {
+    const a = key(A);
+    const b = key(B);
+    if (a[0] !== b[0]) return b[0] - a[0];
+    return Math.abs(a[1] - b[1]) < EPS ? 0 : b[1] - a[1];
+  };
+  const order = [...state.players].sort((A, B) => cmp(A, B) || A.idx - B.idx);
+  const ranks = new Array(state.players.length).fill(0);
+  order.forEach((P, i) => {
+    ranks[P.idx] = i > 0 && cmp(order[i - 1], P) === 0 ? ranks[order[i - 1].idx] : i;
+  });
+
+  // 팀 승패 (연합전): 한 팀만 남았으면 그 팀, 시간이 다 됐으면 남은 지휘관 체력 비율의 합이 큰 팀
+  const teamIds = [...new Set(state.players.map((P) => P.team))];
+  const teamScore = (id) => state.players.filter((P) => P.team === id && !P.dead).reduce((s, P) => s + P.hp / P.maxHp, 0);
+  let winnerTeam = -1;
+  if (teamsAlive.size === 1) winnerTeam = [...teamsAlive][0];
+  else if (teamsAlive.size > 1) {
+    const sorted = teamIds.map((id) => [id, teamScore(id)]).sort((a, b) => b[1] - a[1]);
+    if (sorted[0][1] - sorted[1][1] > EPS) winnerTeam = sorted[0][0];
+  }
+  const top = order.filter((P) => ranks[P.idx] === 0);
+  const winner = top.length === 1 ? top[0].idx : -1;
+  const reason = teamsAlive.size > 1 ? 'time' : 'commander';
+
   state.over = true;
   state.result = {
-    winner,
+    winner, // 단독 1위 플레이어 (공동이면 -1)
+    winnerTeam,
     reason,
-    timeMs: state.timeMs,
-    hp: [Math.max(0, a.hp), Math.max(0, b.hp)],
-    survivors: [unitsOf(state, 0).length, unitsOf(state, 1).length],
+    timeMs: t,
+    hp: state.players.map((P) => Math.max(0, P.hp)),
+    survivors: state.players.map((P) => unitsOf(state, P.idx).length),
+    ranks, // 플레이어별 순위 (0이 1위)
+    order: order.map((P) => P.idx),
   };
+  if (state.format === 'boss') {
+    // 보스에게 준 피해가 점수다
+    state.result.bossDamage = state.players.map((P) => {
+      const foe = state.players.find((Q) => Q.isBoss && Q.idx !== P.idx);
+      if (!foe) return 0;
+      return unitsOf(state, foe.idx).reduce((s, u) => s + (u.damageTaken || 0), 0);
+    });
+  }
   emit(state, { type: 'end', winner, reason });
 }
 
@@ -754,7 +891,8 @@ function basicPlayable(state, p, c) {
   if (state.over) return fail('전투가 끝났다');
   const P = state.players[p];
   const def = CARDS[c.id];
-  if (def.meleeOnly) return fail('난전에서만 쓸 수 있다');
+  if (P.dead) return fail('지휘관이 쓰러졌다');
+  if (def.meleeOnly && !state.format.startsWith('melee')) return fail('난전에서만 쓸 수 있다');
   if (effectiveCost(state, p, c) > P.mana) return fail('마나가 모자라다');
   return OK;
 }
@@ -765,15 +903,16 @@ export function legalTargets(state, p, uid) {
   const c = P.hand.find((h) => h.uid === uid);
   if (!c || !basicPlayable(state, p, c).ok) return [];
   const def = CARDS[c.id];
-  const enemy = 1 - p;
   switch (def.target) {
+    case 'column': // 포고: 내 칸 번호 하나
+      return [0, 1, 2, 3].map((slot) => ({ slot }));
     case 'slot': {
       const empties = emptySlots(state, p);
       if (empties.length) return empties;
       return unitsOf(state, p).map((u) => ({ row: u.row, slot: u.slot })); // 칸이 다 차면 대체
     }
     case 'enemyUnit':
-      return unitsOf(state, enemy).filter((u) => targetable(state, u)).map((u) => ({ unitId: u.id }));
+      return enemiesOf(state, p).flatMap((q) => unitsOf(state, q)).filter((u) => targetable(state, u)).map((u) => ({ unitId: u.id }));
     case 'allyUnit':
       return unitsOf(state, p).filter((u) => !u.dying).map((u) => ({ unitId: u.id }));
     case 'allyUltUnit':
@@ -803,9 +942,11 @@ export function canPlay(state, p, uid, target) {
   const basic = basicPlayable(state, p, c);
   if (!basic.ok) return basic;
   const def = CARDS[c.id];
-  const enemy = 1 - p;
   const t = target || {};
   switch (def.target) {
+    case 'column':
+      if (!Number.isInteger(t.slot) || t.slot < 0 || t.slot >= SLOTS) return fail('칸 번호를 골라야 한다');
+      return OK;
     case 'slot': {
       if (!slotUsable(state, t.row, t.slot)) return fail('놓을 수 없는 칸');
       if (state.board[p][t.row][t.slot] && emptySlots(state, p).length > 0) return fail('빈칸이 있을 때는 대체할 수 없다');
@@ -813,7 +954,7 @@ export function canPlay(state, p, uid, target) {
     }
     case 'enemyUnit': {
       const u = findUnit(state, t.unitId);
-      if (!u || u.owner !== enemy || !targetable(state, u)) return fail('표적이 될 수 없는 유닛');
+      if (!u || !isEnemy(state, p, u.owner) || state.players[u.owner].dead || !targetable(state, u)) return fail('표적이 될 수 없는 유닛');
       return OK;
     }
     case 'allyUnit':
@@ -848,6 +989,7 @@ export function canPlay(state, p, uid, target) {
  */
 export function applyAction(state, p, action) {
   if (state.over) return fail('전투가 끝났다');
+  if (state.players[p].dead) return fail('지휘관이 쓰러졌다');
   if (!action) return fail('행동 없음');
   if (action.type === 'redraw') return doRedraw(state, p, action.uid);
   if (action.type === 'play') return doPlay(state, p, action.uid, action.target);
@@ -911,7 +1053,6 @@ function doPlay(state, p, uid, target) {
     if (old) removeUnit(state, old, false); // 대체된 유닛은 버린 더미로
     summonUnit(state, p, target.row, target.slot, c);
   } else {
-    const enemy = 1 - p;
     switch (c.id) {
       case 'firebolt': {
         const u = findUnit(state, target.unitId);
@@ -942,7 +1083,7 @@ function doPlay(state, p, uid, target) {
       }
       case 'chain': {
         const first = findUnit(state, target.unitId);
-        const others = unitsOf(state, enemy)
+        const others = unitsOf(state, first.owner) // 같은 보드 안에서만 튄다
           .filter((x) => x !== first && targetable(state, x))
           .sort((a, b) => chainDist(first, a) - chainDist(first, b));
         const hits = [first, ...others].slice(0, def.chainDamage.length);
@@ -1003,6 +1144,12 @@ function doPlay(state, p, uid, target) {
       case 'invest':
         P.invested = true;
         break;
+      case 'decree': {
+        // 그 칸의 표적 방향을 다음 방향으로 돌린다 (삼파전: 왼쪽↔오른쪽, 난투장: 왼쪽→정면→오른쪽)
+        const dirs = state.players.length - 1;
+        P.slotDir[target.slot] = (slotDirection(state, p, target.slot) % dirs) + 1;
+        break;
+      }
       case 'catalyst': {
         const h = P.hand.find((x) => x.uid === target.uid);
         h.zeroCost = true;

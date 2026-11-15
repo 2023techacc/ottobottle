@@ -5,7 +5,7 @@ import { CARDS } from './cards.js';
 import { makeRng } from './rng.js';
 import { FRONT, BACK } from './rules.js';
 import {
-  legalTargets, effectiveCost, unitsOf, emptySlots, canRedraw, targetable, hasKw,
+  legalTargets, effectiveCost, unitsOf, emptySlots, canRedraw, targetable, hasKw, enemiesOf,
 } from './battle.js';
 
 export const BOT_LEVELS = {
@@ -44,6 +44,7 @@ export function createBot(opts = {}) {
 
 function thinkRandom(state, p, rng) {
   const P = state.players[p];
+  if (P.dead) return null;
   if (rng() < 0.3) return null;
   const options = [];
   for (const c of P.hand) {
@@ -65,9 +66,10 @@ function thinkSmart(state, p, rng, o) {
   const P = state.players[p];
   const r = state.rules;
   const t = state.timeMs;
-  const enemy = 1 - p;
+  if (P.dead) return null;
   const mine = unitsOf(state, p).filter((u) => !u.dying);
-  const theirs = unitsOf(state, enemy).filter((u) => targetable(state, u));
+  // 난전·연합전에서는 살아 있는 모든 적의 유닛을 본다
+  const theirs = enemiesOf(state, p).flatMap((q) => unitsOf(state, q)).filter((u) => targetable(state, u));
   const incoming = state.telegraphs.filter((g) => g.side === p);
   const threatened = (row, slot) => incoming.some((g) => g.cells.some((c) => c.row === row && c.slot === slot));
   const cost = (c) => effectiveCost(state, p, c);

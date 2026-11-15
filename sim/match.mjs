@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // 봇끼리 한 경기(상점 + 전투 반복)를 여러 번 돌려 경기 흐름을 본다.
 //
-//   node sim/match.mjs                경기 300판
+//   node sim/match.mjs                      1:1 경기 300판
+//   node sim/match.mjs --mode rank8         8인 경기 60판
 //   node sim/match.mjs --games 1000
 //   node sim/match.mjs --econ "{\"playerHp\":60}"     경제 수치를 바꿔서
 //
-// 결과는 sim/out/match_*.csv 에도 저장한다.
+// 결과는 sim/out/match_<모드>_*.csv 에도 저장한다.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,48 +14,62 @@ import * as E from '../engine/index.js';
 import { Tally, percentile, round, pct, ci95, writeCsv, parseArgs } from './lib.mjs';
 
 const args = parseArgs(process.argv.slice(2));
-const GAMES = Number(args.games || 300);
+const MODE = args.mode || 'duel';
+const N = E.MODES[MODE].players;
+const GAMES = Number(args.games || (MODE === 'duel' ? 300 : 60));
 const SEED = Number(args.seed || 1);
 const ECON = args.econ ? JSON.parse(args.econ) : {};
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));
 const STYLES = Object.keys(E.SHOP_STYLES);
+const FORMAT_NAMES = { practice: '연습', duel: '결투', melee3: '삼파전', melee4: '난투장', alliance: '연합전', boss: '보스 레이드' };
 const t0 = Date.now();
 
 function playGame(seed) {
   const rng = E.makeRng(E.hashSeed(seed, 'setup'));
-  const players = [0, 1].map(() => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng) }));
-  const styles = [rng.pick(STYLES), rng.pick(STYLES)];
-  const game = E.createGame({ seed, players, econ: ECON });
+  const econ = { ...E.DEFAULT_ECON, ...E.MODES[MODE].econ, ...ECON };
+  const players = Array.from({ length: N }, () => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng, econ) }));
+  const styles = players.map(() => rng.pick(STYLES));
+  const game = E.createGame({ seed, players, mode: MODE, econ: ECON });
+  for (const P of game.players) E.runDraftBot(game, P.idx);
   const perRound = [];
+  const formats = [];
   let battleMs = 0;
-  while (game.phase !== 'over' && game.round < 80) {
-    for (const p of [0, 1]) E.runShopBot(game, p, { style: styles[p] });
-    perRound.push(game.players.map((P) => ({ level: P.level, gold: P.gold, deck: P.deck.length, hp: P.hp })));
+  while (game.phase !== 'over' && game.round < 120) {
+    for (const P of game.players) E.runShopBot(game, P.idx, { style: styles[P.idx] });
+    perRound.push(game.players.map((P) => ({ alive: P.alive, level: P.level, gold: P.gold, deck: P.deck.length, hp: P.hp })));
     const battles = E.roundBattles(game).map((b) => ({ ...b, state: E.runBattle(b.cfg).state }));
     const s = E.finishRound(game, battles);
-    battleMs += Math.max(...s.results.map((r) => r.timeMs));
+    const longest = Math.max(...s.results.map((r) => r.timeMs));
+    battleMs += longest;
+    formats.push({ format: s.format, ms: longest, damage: s.results.reduce((a, r) => a + r.damage, 0), sides: s.results.length });
   }
-  return { game, styles, perRound, battleMs };
+  return { game, styles, perRound, battleMs, formats };
 }
 
 const rounds = [];
 const minutes = [];
+const firstOut = [];
 const cmds = new Tally();
 const styleTally = new Tally();
 const cardBuys = new Tally();
 const byRound = new Tally();
+const byFormat = new Tally();
 const sum = { level: 0, deck: 0, stars: 0, fused: 0, gold: 0, rerolls: 0, xp: 0, removed: 0, winnerHp: 0, comebacks: 0, seat0: 0, draws: 0 };
 
 for (let i = 0; i < GAMES; i++) {
-  const { game, styles, perRound, battleMs } = playGame(E.hashSeed(SEED, 'game', i));
+  const { game, styles, perRound, battleMs, formats } = playGame(E.hashSeed(SEED, 'game', i));
   rounds.push(game.round);
   minutes.push((game.round * game.econ.shopSeconds * 1000 + battleMs) / 60000);
+  const outs = game.players.filter((P) => P.eliminatedRound).map((P) => P.eliminatedRound);
+  if (outs.length) firstOut.push(Math.min(...outs));
   if (game.winner === -1) sum.draws++;
   if (game.winner === 0) sum.seat0++;
   game.players.forEach((P, p) => {
-    const pts = game.winner === -1 ? 0.5 : game.winner === p ? 1 : 0;
-    cmds.add(P.commander, { n: 1, pts });
-    styleTally.add(styles[p], { n: 1, pts });
+    // 승점: 1위 1점 … 꼴찌 0점 (1:1에서는 승 1, 패 0과 같다)
+    const pts = game.winner === -1 && N === 2 ? 0.5 : (N - P.place) / (N - 1);
+    const row = { n: 1, pts, place: P.place, first: P.place === 1 ? 1 : 0, top: P.place <= N / 2 ? 1 : 0 };
+    cmds.add(P.commander, row);
+    styleTally.add(styles[p], row);
     sum.level += P.level;
     sum.deck += P.deck.length;
     sum.stars += P.deck.filter((c) => c.stars > 1).length;
@@ -67,51 +82,69 @@ for (let i = 0; i < GAMES; i++) {
   });
   if (game.winner >= 0) {
     sum.winnerHp += game.players[game.winner].hp;
-    // 역전: 한때 HP가 10 이상 뒤졌던 쪽이 이긴 경기
-    if (perRound.some((r) => r[1 - game.winner].hp - r[game.winner].hp >= 10)) sum.comebacks++;
+    // 역전: 한때 HP가 최고보다 maxHp의 25% 이상 뒤졌던 쪽이 이긴 경기
+    const gap = game.econ.playerHp * 0.25;
+    if (perRound.some((r) => Math.max(...r.map((x) => x.hp)) - r[game.winner].hp >= gap)) sum.comebacks++;
   }
   perRound.forEach((r, k) => {
-    for (const s of r) byRound.add(k + 1, { n: 1, level: s.level, gold: s.gold, deck: s.deck, hp: s.hp });
+    for (const s of r) if (s.alive) byRound.add(k + 1, { n: 1, level: s.level, gold: s.gold, deck: s.deck, hp: s.hp });
+    byRound.add(k + 1, { games: 1, alive: r.filter((s) => s.alive).length });
   });
+  for (const f of formats) byFormat.add(f.format, { n: 1, ms: f.ms, damage: f.damage, sides: f.sides });
 }
 
-const sides = GAMES * 2;
+const sides = GAMES * N;
 rounds.sort((a, b) => a - b);
 minutes.sort((a, b) => a - b);
+firstOut.sort((a, b) => a - b);
 const overall = {
+  모드: E.MODES[MODE].name,
   경기수: GAMES,
   라운드_중앙값: percentile(rounds, 0.5), 라운드_p10: percentile(rounds, 0.1), 라운드_p90: percentile(rounds, 0.9),
   '시간_중앙값(분)': round(percentile(minutes, 0.5), 1), '시간_p90(분)': round(percentile(minutes, 0.9), 1),
+  첫_탈락_라운드: percentile(firstOut, 0.5),
   끝날때_레벨: round(sum.level / sides, 1), 덱_장수: round(sum.deck / sides, 1),
   강화된_카드: round(sum.stars / sides, 1), 융합_카드: round(sum.fused / sides, 2),
   남은_골드: round(sum.gold / sides, 1), 리롤: round(sum.rerolls / sides, 1), 경험치_구매: round(sum.xp / sides, 1), 카드_빼기: round(sum.removed / sides, 1),
-  승자_남은HP: round(sum.winnerHp / Math.max(1, GAMES - sum.draws), 1),
-  역전승: pct(sum.comebacks / Math.max(1, GAMES - sum.draws)),
-  '0번자리_승률': pct((sum.seat0 + sum.draws / 2) / GAMES),
+  우승자_남은HP: round(sum.winnerHp / Math.max(1, GAMES - sum.draws), 1),
+  역전_우승: pct(sum.comebacks / Math.max(1, GAMES - sum.draws)),
 };
-console.log(`\n━━ 한 경기 흐름 (${GAMES}경기, 목표 10~15분) ━━`);
+if (N === 2) overall['0번자리_승률'] = pct((sum.seat0 + sum.draws / 2) / GAMES);
+const goal = MODE === 'duel' ? '10~15분' : '20~25분, 약 15라운드';
+console.log(`\n━━ ${E.MODES[MODE].name} 한 경기 흐름 (${GAMES}경기, 목표 ${goal}) ━━`);
 console.table([overall]);
-writeCsv(path.join(OUT, 'match_overall.csv'), [overall]);
+writeCsv(path.join(OUT, `match_${MODE}_overall.csv`), [overall]);
 
-console.log('\n━━ 라운드별 평균 (상점을 마친 시점) ━━');
-const roundRows = byRound.entries().filter(([, r]) => r.n >= sides * 0.2).map(([k, r]) => ({
-  라운드: k, 표본: r.n, 레벨: round(r.level / r.n, 1), 골드: round(r.gold / r.n, 1), 덱_장수: round(r.deck / r.n, 1), HP: round(r.hp / r.n, 1),
+console.log('\n━━ 라운드별 평균 (상점을 마친 시점, 살아 있는 플레이어 기준) ━━');
+const roundRows = byRound.entries().filter(([, r]) => r.games >= GAMES * 0.2).map(([k, r]) => ({
+  라운드: k, 진행_경기: r.games, 남은_인원: round(r.alive / r.games, 1),
+  레벨: round(r.level / r.n, 1), 골드: round(r.gold / r.n, 1), 덱_장수: round(r.deck / r.n, 1), HP: round(r.hp / r.n, 1),
 }));
 console.table(roundRows);
-writeCsv(path.join(OUT, 'match_rounds.csv'), roundRows);
+writeCsv(path.join(OUT, `match_${MODE}_rounds.csv`), roundRows);
 
-console.log('\n━━ 지휘관·상점 성향별 승률 ━━');
-const cmdRows = cmds.entries().map(([id, r]) => ({ 구분: E.COMMANDERS[id].name, 경기: r.n, 승률: pct(r.pts / r.n), 오차: ci95(r.pts / r.n, r.n) })).sort((a, b) => b.승률 - a.승률);
+console.log('\n━━ 형식별 ━━');
+const formatRows = byFormat.entries().map(([id, r]) => ({
+  형식: FORMAT_NAMES[id], 횟수: r.n, '전투_길이(초)': round(r.ms / r.n / 1000, 1), 한_명당_HP_피해: round(r.damage / Math.max(1, r.sides), 1),
+}));
+console.table(formatRows);
+writeCsv(path.join(OUT, `match_${MODE}_formats.csv`), formatRows);
+
+console.log('\n━━ 지휘관·상점 성향별 ━━');
 const styleNames = { eco: '저축형', balanced: '균형형', spend: '소비형' };
-const styleRows = styleTally.entries().map(([id, r]) => ({ 구분: styleNames[id], 경기: r.n, 승률: pct(r.pts / r.n), 오차: ci95(r.pts / r.n, r.n) })).sort((a, b) => b.승률 - a.승률);
+const row = (label, r) => ({
+  구분: label, 경기: r.n, 평균_순위: round(r.place / r.n, 2), '1위': pct(r.first / r.n), 상위_절반: pct(r.top / r.n), 오차: ci95(r.top / r.n, r.n),
+});
+const cmdRows = cmds.entries().map(([id, r]) => row(E.COMMANDERS[id].name, r)).sort((a, b) => a.평균_순위 - b.평균_순위);
+const styleRows = styleTally.entries().map(([id, r]) => row(styleNames[id], r)).sort((a, b) => a.평균_순위 - b.평균_순위);
 console.table([...cmdRows, ...styleRows]);
-writeCsv(path.join(OUT, 'match_commanders.csv'), [...cmdRows, ...styleRows]);
+writeCsv(path.join(OUT, `match_${MODE}_commanders.csv`), [...cmdRows, ...styleRows]);
 
 console.log('\n━━ 많이 산 카드 ━━');
 const buyRows = cardBuys.entries().map(([id, r]) => ({
-  카드: E.CARDS[id].name, 등급: E.CARDS[id].tier, 경기당_구매: round(r.bought / sides, 2), 산_쪽의_승률: pct(r.pts / r.games),
+  카드: E.CARDS[id].name, 등급: E.CARDS[id].tier, 경기당_구매: round(r.bought / sides, 2), 산_쪽의_승점: pct(r.pts / r.games),
 })).sort((a, b) => b.경기당_구매 - a.경기당_구매);
 console.table(buyRows);
-writeCsv(path.join(OUT, 'match_cards.csv'), buyRows);
+writeCsv(path.join(OUT, `match_${MODE}_cards.csv`), buyRows);
 
 console.log(`\n${((Date.now() - t0) / 1000).toFixed(1)}초. CSV: ${OUT}`);

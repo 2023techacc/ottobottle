@@ -107,8 +107,25 @@ fieldset label select, fieldset label input { width: 100%; min-width: 0; }
 .lastplay { font-size: 12px; color: var(--gold); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── 보드 ── */
-.board { display: grid; grid-template-rows: repeat(4, auto); gap: 6px; }
-.boardrow { display: grid; grid-template-columns: 34px repeat(4, minmax(0, 1fr)); gap: 6px; }
+.board { display: block; }
+.pboards { display: grid; grid-template-columns: repeat(var(--n, 1), minmax(0, 1fr)); gap: 12px; }
+.pboards.bottom { margin-top: 12px; }
+.pboard { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pboard.dead { opacity: .35; }
+.pboard .commander { margin: 0; }
+.boardrow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+/* 보드가 셋 이상이면 칸을 작게 그린다 */
+.board.multi .cell { min-height: 78px; }
+.board.multi .cell .unit { padding: 4px 4px 5px; gap: 2px; }
+.board.multi .cell .unit .uname { font-size: 11px; padding-left: 0; padding-top: 11px; }
+.board.multi .cell .unit .stats { font-size: 10px; flex-direction: column; }
+.board.multi .tag { font-size: 9px; padding: 0 2px; }
+.board.multi .commander { padding: 4px 8px; gap: 6px; }
+.board.multi .commander .name { min-width: 0; font-size: 12px; }
+.board.multi .commander .hpbar { min-width: 60px; height: 14px; }
+.board.multi .commander .hpbar span { line-height: 14px; font-size: 11px; }
+.board.multi .pboard.foe .commander .meta, .board.multi .pboard.foe .commander .pips { display: none; }
+.cell .slotno b { color: var(--gold); font-weight: 600; }
 .boardrow.split { margin-top: 10px; }
 .rowlabel { writing-mode: vertical-rl; text-align: center; font-size: 11px; color: var(--dim); align-self: center; letter-spacing: 2px; }
 .cell {
@@ -236,6 +253,9 @@ fieldset label select, fieldset label input { width: 100%; min-width: 0; }
 .chip.selected { box-shadow: 0 0 0 2px var(--me); border-color: var(--me); }
 .chip.fusable { border-color: var(--gauge); box-shadow: 0 0 0 1px var(--gauge); }
 .chip.dim { opacity: .45; }
+.chip.removable { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+#draft .field { flex: 1; }
+#draft .card { width: 190px; min-height: 130px; }
 #sOp { font-size: 13px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 #sOp .decklist { margin-top: 2px; }
 #sOp small { color: var(--dim); }
@@ -245,3 +265,18 @@ fieldset label select, fieldset label input { width: 100%; min-width: 0; }
 #sPool tr.mine td:first-child { color: var(--gold); }
 details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin: 6px 0; }
 button:disabled { opacity: .45; cursor: default; }
+
+/* ── 8인 경기 ── */
+.card .cost.free { width: auto; min-width: 24px; padding: 0 6px; border-radius: 12px; font-size: 11px; }
+#sOp .opp { border-top: 1px solid var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+#sOp .opp:first-child { border-top: 0; padding-top: 0; }
+#sRankBox[hidden], #mOpCommanderRow[hidden] { display: none; }
+#sRank table { border-collapse: collapse; width: 100%; font-size: 12px; margin-bottom: 10px; }
+#sRank td { padding: 2px 4px; border-bottom: 1px solid var(--line); }
+#sRank tr.mine td, .result-box tr.mine td { color: var(--gold); }
+#sRank tr.out td { color: #5d6a82; }
+.result-box td small { color: var(--dim); }
+.result-box { max-height: 90vh; overflow: auto; }
+/* 보드가 셋 이상일 때 위쪽 보드들의 줄 높이를 맞춘다 */
+.board.multi .pboards.top .cell { height: 108px; overflow: hidden; }
+.board.multi .pboards.top .commander { min-height: 58px; align-content: flex-start; }
