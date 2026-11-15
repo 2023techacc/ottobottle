@@ -280,3 +280,17 @@ button:disabled { opacity: .45; cursor: default; }
 /* 보드가 셋 이상일 때 위쪽 보드들의 줄 높이를 맞춘다 */
 .board.multi .pboards.top .cell { height: 108px; overflow: hidden; }
 .board.multi .pboards.top .commander { min-height: 58px; align-content: flex-start; }
+
+/* ── 단축키 ── */
+kbd {
+  display: inline-block; min-width: 18px; padding: 0 4px; margin: 0 1px; text-align: center;
+  font: 11px/16px ui-monospace, Consolas, monospace; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+}
+.keys table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 4px 0 8px; }
+.keys td { padding: 2px 4px; vertical-align: top; color: var(--dim); }
+.keys td:first-child { white-space: nowrap; color: var(--text); }
+.cell .keyhint { position: absolute; bottom: 2px; right: 5px; font: 10px/1 ui-monospace, Consolas, monospace; color: #6b7890; pointer-events: none; }
+.cell.target .keyhint { color: var(--gold); font-weight: 700; }
+.pboard.focus { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 8px; }
+button small { opacity: .7; margin-left: 4px; }

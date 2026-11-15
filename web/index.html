@@ -84,7 +84,7 @@
         <div class="clock" id="sRound"></div>
         <div class="field" id="sInfo"></div>
         <div class="shoptimer" id="sTimer"></div>
-        <button id="sReady" type="button" class="primary">전투 시작</button>
+        <button id="sReady" type="button" class="primary">전투 시작 <small>Enter</small></button>
         <button id="sQuit" type="button">그만두기</button>
       </header>
       <div class="arena">
@@ -100,6 +100,22 @@
           <div class="row" id="sDeckActions"></div>
         </div>
         <aside class="log">
+          <details class="keys" open>
+            <summary>단축키</summary>
+            <table>
+              <tr><td><kbd>1</kbd>~<kbd>5</kbd></td><td>상점 카드 사기 (보스 보상이 있으면 보상 고르기, <kbd>0</kbd>은 받지 않기)</td></tr>
+              <tr><td><kbd>D</kbd></td><td>리롤</td></tr>
+              <tr><td><kbd>F</kbd></td><td>경험치 구매</td></tr>
+              <tr><td><kbd>S</kbd></td><td>상점 잠금 / 해제</td></tr>
+              <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>내 덱에서 카드 고르기</td></tr>
+              <tr><td><kbd>G</kbd></td><td>고른 카드를 시작 카드로 지정 / 해제</td></tr>
+              <tr><td><kbd>X</kbd></td><td>고른 카드를 덱에서 빼기 (고른 카드가 없으면 빼기 모드)</td></tr>
+              <tr><td><kbd>V</kbd></td><td>융합: 고른 카드를 몸체로 → 재료를 고르고 다시 <kbd>V</kbd></td></tr>
+              <tr><td><kbd>C</kbd></td><td>같은 카드 3장 합치기</td></tr>
+              <tr><td><kbd>Enter</kbd></td><td>전투 시작</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>선택 취소</td></tr>
+            </table>
+          </details>
           <h2>이번 상대</h2>
           <div id="sOp"></div>
           <div id="sRankBox">
@@ -120,7 +136,7 @@
     <section id="setup" hidden>
       <h1>카드 오토배틀러 <small>(가제) · 1:1 결투 플레이 테스트</small></h1>
       <p class="lead">봇과 한 판 붙어 보는 화면이다. 상점·경제는 아직 없고, 전투 한 판만 한다.
-        카드를 누른 뒤 놓을 칸이나 표적을 누르면 된다. 숫자 키 1~7로도 카드를 고를 수 있다.</p>
+        카드를 누른 뒤 놓을 칸이나 표적을 누르면 된다. 숫자 키 1~7로 카드를 고르고 Q·W·E·R / A·S·D·F로 칸을 고를 수도 있다.</p>
 
       <div class="setup-grid">
         <fieldset>
@@ -193,6 +209,21 @@
           <div class="hand" id="hand"></div>
         </div>
         <aside class="log">
+          <details class="keys" open>
+            <summary>단축키</summary>
+            <table>
+              <tr><td><kbd>1</kbd>~<kbd>7</kbd></td><td>손패 카드 고르기 (표적이 필요 없으면 바로 낸다)</td></tr>
+              <tr><td><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd></td><td>보드 윗줄의 칸 1~4</td></tr>
+              <tr><td><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd></td><td>보드 아랫줄의 칸 1~4</td></tr>
+              <tr><td><kbd>Tab</kbd></td><td>표적으로 삼을 상대 보드 바꾸기 (난전·연합전)</td></tr>
+              <tr><td><kbd>Z</kbd></td><td>다시 뽑기 (누른 뒤 버릴 카드 번호)</td></tr>
+              <tr><td><kbd>X</kbd> <kbd>Esc</kbd></td><td>선택 취소</td></tr>
+              <tr><td><kbd>Space</kbd></td><td>일시정지 / 계속</td></tr>
+              <tr><td><kbd>-</kbd> <kbd>=</kbd></td><td>느리게 / 빠르게</td></tr>
+              <tr><td><kbd>Enter</kbd></td><td>결과 창의 첫 버튼</td></tr>
+            </table>
+            <p class="note">칸 글자는 화면의 위치를 따른다. 내 보드는 윗줄이 전열, 상대 보드는 윗줄이 후열이다. 칸마다 글자가 적혀 있다.</p>
+          </details>
           <h2>기록</h2>
           <ol id="log"></ol>
         </aside>

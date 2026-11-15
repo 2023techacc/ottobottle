@@ -354,7 +354,7 @@ function buildBoard() {
         cell.dataset.side = p;
         cell.dataset.row = row;
         cell.dataset.slot = slot;
-        cell.innerHTML = `<span class="slotno">${row === FRONT ? '전' : '후'}${slot + 1}</span><div class="content"></div><div class="fx"></div>`;
+        cell.innerHTML = `<span class="slotno">${row === FRONT ? '전' : '후'}${slot + 1}</span><div class="content"></div><div class="fx"></div><span class="keyhint"></span>`;
         rowEl.append(cell);
         cells.set(cellKey(p, row, slot), cell);
       }
@@ -471,6 +471,9 @@ function render() {
     patch(`cmd${i}`, $(`cmd${i}`), commanderHtml(state, i));
     $(`pboard${i}`).classList.toggle('dead', P.dead);
   });
+  // 상대 보드가 여럿이면, 키보드로 고를 보드에 테두리를 친다
+  const manyFoes = boardLayout(state).top.length > 1;
+  state.players.forEach((P, i) => $(`pboard${i}`).classList.toggle('focus', manyFoes && wantsEnemy(state) && i === focusBoard(state)));
   // 난전에서는 내 칸마다 어느 상대를 치는지 적어 둔다 (포고로 바뀔 수 있다)
   if (melee) {
     for (let slot = 0; slot < 4; slot++) {
@@ -495,6 +498,7 @@ function render() {
     const left = danger.get(key);
     const html = (u ? unitHtml(state, u) : '') + (left !== undefined ? `<span class="countdown">${(left / 1000).toFixed(1)}</span>` : '');
     patch(key, content, html);
+    patch(`kh${key}`, cell.querySelector('.keyhint'), keyBoard(state) === side ? cellLetter(state, side, row, slot) : '');
     cell.classList.toggle('blocked', !E.slotUsable(state, row, slot));
     cell.classList.toggle('target', targets.has(key));
     cell.classList.toggle('danger', left !== undefined);
@@ -532,7 +536,7 @@ function renderHand() {
   const rd = E.canRedraw(state, ME);
   const cdLeft = Math.max(0, P.redrawReadyAt - state.timeMs);
   html.push(`<div class="card redraw-btn${rd.ok ? ' on' : ' off'}${sel && sel.mode === 'redraw' ? ' sel' : ''}" data-redraw="1" role="button" tabindex="0">
-    다시 뽑기 (R)<br><small>마나 1 · ${cdLeft > 0 ? `${(cdLeft / 1000).toFixed(1)}초 뒤` : '준비됨'}</small></div>`);
+    다시 뽑기 (Z)<br><small>마나 1 · ${cdLeft > 0 ? `${(cdLeft / 1000).toFixed(1)}초 뒤` : '준비됨'}</small></div>`);
   patch('hand', $('hand'), html.join(''));
 }
 
@@ -775,21 +779,6 @@ function initInput() {
     game = null;
     showScreen('setup');
   });
-  document.addEventListener('keydown', (ev) => {
-    if (!game || $('battle').hidden) return;
-    if (ev.target.matches('input, select, textarea')) return;
-    if (ev.key >= '1' && ev.key <= '9') {
-      const c = game.state.players[ME].hand[Number(ev.key) - 1];
-      if (c) selectCard(c.uid);
-    } else if (ev.key === 'r' || ev.key === 'R' || ev.key === 'ㄱ') toggleRedraw();
-    else if (ev.key === 'Escape') {
-      game.sel = null;
-      render();
-    } else if (ev.key === ' ') {
-      ev.preventDefault();
-      setSpeed(game.speed === 0 ? 1 : 0);
-    }
-  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -982,18 +971,7 @@ function initMatch() {
     endMatch();
     showScreen('lobby');
   });
-  document.addEventListener('keydown', (ev) => {
-    if (match && !$('draft').hidden && ev.key >= '1' && ev.key <= '3') draftChoose(Number(ev.key) - 1);
-    if (!match || $('shop').hidden || ev.target.matches('input, select, textarea')) return;
-    if (ev.key === 'd' || ev.key === 'D' || ev.key === 'ㅇ') shopAct(() => E.reroll(match.game, ME));
-    else if (ev.key === 'f' || ev.key === 'F' || ev.key === 'ㄹ') shopAct(() => E.buyXp(match.game, ME));
-    else if (ev.key === 'Escape') {
-      match.sel = null;
-      match.fuseBody = null;
-      match.removeMode = false;
-      renderShop();
-    }
-  });
+  document.addEventListener('keydown', onKey);
 
   renderLobby();
   showScreen('lobby');
@@ -1294,9 +1272,9 @@ function renderShop() {
   const rc = E.rerollCostOf(game, ME);
   $('sShopButtons').innerHTML = `
     <button type="button" data-act="reroll"${P.gold < rc ? ' disabled' : ''}>리롤 (${rc === 0 ? '무료' : `${rc}골드`}) <small>D</small></button>
-    <button type="button" data-act="lock" class="${P.locked ? 'on' : ''}">${P.locked ? '잠금 해제' : '잠금'} <small>다음 라운드에도 유지</small></button>
+    <button type="button" data-act="lock" class="${P.locked ? 'on' : ''}">${P.locked ? '잠금 해제' : '잠금'} <small>S · 다음 라운드에도 유지</small></button>
     <button type="button" data-act="xp"${P.gold < e.xpCost || P.level >= e.maxLevel ? ' disabled' : ''}>경험치 +${e.xpPerBuy} (${e.xpCost}골드) <small>F</small></button>
-    <button type="button" data-act="removeMode" class="${match.removeMode ? 'on' : ''}"${P.removesLeft <= 0 || P.gold < e.removeCost || P.deck.length <= e.deckMin ? ' disabled' : ''}>카드 빼기 (${e.removeCost}골드) <small>${P.removesLeft > 0 ? '라운드당 1번' : '이번 라운드는 이미 뺌'}</small></button>`;
+    <button type="button" data-act="removeMode" class="${match.removeMode ? 'on' : ''}"${P.removesLeft <= 0 || P.gold < e.removeCost || P.deck.length <= e.deckMin ? ' disabled' : ''}>카드 빼기 (${e.removeCost}골드) <small>X · ${P.removesLeft > 0 ? '라운드당 1번' : '이번 라운드는 이미 뺌'}</small></button>`;
 
   // 내 덱
   $('sDeckInfo').textContent = `${P.deck.length}장 (최소 ${e.deckMin}, 최대 ${e.deckMax}) · ✓ 표시는 시작 손패에 반드시 들어오는 카드`;
@@ -1318,22 +1296,22 @@ function renderShop() {
   // 고른 카드에 할 수 있는 일
   const actions = [];
   for (const u of E.upgradable(game, ME)) {
-    actions.push(`<button type="button" data-act="upgrade" data-id="${u.id}" data-stars="${u.stars}" class="primary">${esc(E.CARDS[u.id].name)}${'★'.repeat(u.stars - 1)} 3장 → ${'★'.repeat(u.stars + 1)}로 합치기</button>`);
+    actions.push(`<button type="button" data-act="upgrade" data-id="${u.id}" data-stars="${u.stars}" class="primary">${esc(E.CARDS[u.id].name)}${'★'.repeat(u.stars - 1)} 3장 → ${'★'.repeat(u.stars + 1)}로 합치기 <small>C</small></button>`);
   }
   const sel = P.deck.find((c) => c.key === match.sel);
   let hint = match.hint;
   if (match.removeMode) {
     hint = `덱에서 뺄 카드를 누른다 (${e.removeCost}골드). 풀에서 온 카드는 풀로 돌아간다. (Esc: 취소)`;
   } else if (fuseBody) {
-    hint = `${E.cardLabel(fuseBody)}에 붙일 재료 카드를 누른다. 보라색 테두리가 쓸 수 있는 재료다. 재료 카드는 사라진다.`;
+    hint = `${E.cardLabel(fuseBody)}에 붙일 재료 카드를 누른다 (키보드: ←/→로 고르고 V). 보라색 테두리가 쓸 수 있는 재료다. 재료 카드는 사라진다.`;
     actions.push('<button type="button" data-act="cancelFuse">융합 취소</button>');
   } else if (sel) {
     const isOpening = P.opening.includes(sel.key);
-    if (E.openingCount(game, ME) > 0) actions.push(`<button type="button" data-act="opening">${isOpening ? '시작 카드에서 빼기' : '시작 카드로 고르기'}</button>`);
+    if (E.openingCount(game, ME) > 0) actions.push(`<button type="button" data-act="opening">${isOpening ? '시작 카드에서 빼기' : '시작 카드로 고르기'} <small>G</small></button>`);
     const canRemove = P.removesLeft > 0 && P.gold >= e.removeCost && P.deck.length > e.deckMin;
     actions.push(`<button type="button" data-act="remove"${canRemove ? '' : ' disabled'}>덱에서 빼기 (${e.removeCost}골드${P.removesLeft > 0 ? '' : ', 이번 라운드는 이미 뺌'})</button>`);
     const canBody = P.fusionsLeft > 0 && !sel.fuse && P.deck.length > e.deckMin;
-    actions.push(`<button type="button" data-act="fuse"${canBody ? '' : ' disabled'}>융합: 이 카드에 효과 붙이기</button>`);
+    actions.push(`<button type="button" data-act="fuse"${canBody ? '' : ' disabled'}>융합: 이 카드에 효과 붙이기 <small>V</small></button>`);
     if (!hint) hint = `${E.cardLabel(sel)}: ${E.CARDS[sel.id].text || ''}`;
   } else if (!hint) {
     hint = '덱의 카드를 누르면 시작 카드 지정, 빼기, 융합을 할 수 있다.';
@@ -1480,6 +1458,211 @@ function watchRest() {
 
 window.__match = () => match;
 window.__render = () => { if (game) { consumeEvents(); render(); } };
+
+// ═════════════════════════════════════════════════════════════
+// 키보드 단축키
+// 글자 키는 ev.code로 읽는다. 한글 입력 상태이거나 자판 배열이 달라도 같은 자리의 키가 같은 일을 한다.
+// ═════════════════════════════════════════════════════════════
+
+/** 보드의 칸을 가리키는 키: 화면의 윗줄이 Q W E R, 아랫줄이 A S D F */
+const CELL_KEYS = { KeyQ: [0, 0], KeyW: [0, 1], KeyE: [0, 2], KeyR: [0, 3], KeyA: [1, 0], KeyS: [1, 1], KeyD: [1, 2], KeyF: [1, 3] };
+const CELL_LETTERS = ['QWER', 'ASDF'];
+const SPEEDS = [0.5, 1, 2];
+
+function digitOf(ev) {
+  const m = /^(?:Digit|Numpad)(\d)$/.exec(ev.code);
+  return m ? Number(m[1]) : null;
+}
+
+/** 지금 고른 카드가 적 유닛을 표적으로 삼는가 */
+function wantsEnemy(state) {
+  if (!game || !game.sel || game.sel.mode !== 'play') return false;
+  const c = state.players[ME].hand.find((h) => h.uid === game.sel.uid);
+  return Boolean(c) && E.CARDS[c.id].target === 'enemyUnit';
+}
+
+/** 키보드로 표적을 고를 상대 보드. Tab으로 바꾼다. */
+function focusBoard(state) {
+  const foes = boardLayout(state).top.filter((i) => E.isEnemy(state, ME, i) && !state.players[i].dead);
+  if (!foes.includes(game.focus)) game.focus = foes[0] ?? -1;
+  return game.focus;
+}
+
+/** 칸 글자 키가 지금 가리키는 보드: 적 유닛을 고르는 중이면 상대 보드, 아니면 내 보드 */
+function keyBoard(state) {
+  return wantsEnemy(state) ? focusBoard(state) : ME;
+}
+
+/** 화면의 위·아랫줄이 그 보드에서는 전열인지 후열인지. 위쪽 보드는 후열이 윗줄이다. */
+function rowAt(state, side, visualRow) {
+  const top = boardLayout(state).top.includes(side);
+  return (visualRow === 0) === top ? BACK : FRONT;
+}
+
+function cellLetter(state, side, row, slot) {
+  const visualRow = rowAt(state, side, 0) === row ? 0 : 1;
+  return CELL_LETTERS[visualRow][slot];
+}
+
+function clickFirst(container) {
+  const b = $(container).querySelector('button:not([disabled])');
+  if (b) b.click();
+  return Boolean(b);
+}
+
+function battleKey(ev) {
+  const { state } = game;
+  const d = digitOf(ev);
+  if (d) {
+    const c = state.players[ME].hand[d - 1];
+    if (c) selectCard(c.uid);
+    return true;
+  }
+  if (CELL_KEYS[ev.code]) {
+    const [visualRow, slot] = CELL_KEYS[ev.code];
+    const side = keyBoard(state);
+    if (side >= 0) clickCell(side, rowAt(state, side, visualRow), slot);
+    return true;
+  }
+  switch (ev.code) {
+    case 'KeyZ': toggleRedraw(); return true;
+    case 'KeyX':
+    case 'Escape':
+      game.sel = null;
+      render();
+      return true;
+    case 'Space': setSpeed(game.speed === 0 ? 1 : 0); return true;
+    case 'Tab': {
+      const foes = boardLayout(state).top.filter((i) => E.isEnemy(state, ME, i) && !state.players[i].dead);
+      if (foes.length > 1) {
+        game.focus = foes[(foes.indexOf(focusBoard(state)) + 1) % foes.length];
+        render();
+      }
+      return true;
+    }
+    case 'Minus':
+    case 'Equal': {
+      const i = SPEEDS.indexOf(game.speed === 0 ? 1 : game.speed);
+      setSpeed(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + (ev.code === 'Equal' ? 1 : -1)))]);
+      return true;
+    }
+    default: return false;
+  }
+}
+
+/** 상점 화면에 보이는 순서대로의 내 덱 */
+function deckOrder(P) {
+  return [...P.deck].sort((a, b) => E.CARDS[a.id].cost - E.CARDS[b.id].cost || a.id.localeCompare(b.id) || a.key - b.key);
+}
+
+function shopKey(ev) {
+  const { game: g } = match;
+  const P = g.players[ME];
+  const d = digitOf(ev);
+  if (d !== null) {
+    if (P.reward) {
+      if (d === 0) shopAct(() => E.skipReward(g, ME));
+      else if (d <= P.reward.options.length) shopAct(() => E.claimReward(g, ME, d - 1));
+    } else if (d >= 1 && d <= P.shop.length) shopAct(() => E.buy(g, ME, d - 1));
+    return true;
+  }
+  const order = deckOrder(P);
+  switch (ev.code) {
+    case 'KeyD': shopAct(() => E.reroll(g, ME)); return true;
+    case 'KeyF': shopAct(() => E.buyXp(g, ME)); return true;
+    case 'KeyS': shopAct(() => E.toggleLock(g, ME)); return true;
+    case 'ArrowLeft':
+    case 'ArrowRight': {
+      if (!order.length) return true;
+      const i = order.findIndex((c) => c.key === match.sel);
+      const step = ev.code === 'ArrowRight' ? 1 : -1;
+      match.sel = order[i < 0 ? (step > 0 ? 0 : order.length - 1) : (i + step + order.length) % order.length].key;
+      match.removeMode = false;
+      match.hint = '';
+      renderShop();
+      return true;
+    }
+    case 'KeyG': {
+      if (match.sel === null || E.openingCount(g, ME) <= 0) return true;
+      let keys = [...P.opening];
+      if (keys.includes(match.sel)) keys = keys.filter((k) => k !== match.sel);
+      else {
+        keys.push(match.sel);
+        while (keys.length > E.openingCount(g, ME)) keys.shift();
+      }
+      E.setOpening(g, ME, keys);
+      renderShop();
+      return true;
+    }
+    case 'KeyX':
+      if (match.sel !== null) {
+        const key = match.sel;
+        shopAct(() => {
+          const res = E.removeCard(g, ME, key);
+          if (res.ok) match.sel = null;
+          return res;
+        });
+      } else {
+        match.removeMode = !match.removeMode;
+        match.fuseBody = null;
+        renderShop();
+      }
+      return true;
+    case 'KeyV':
+      if (match.fuseBody && match.sel !== null && match.sel !== match.fuseBody) {
+        const body = match.fuseBody;
+        const mat = match.sel;
+        match.fuseBody = null;
+        shopAct(() => {
+          const res = E.fuse(g, ME, body, mat);
+          if (res.ok) match.sel = body;
+          return res;
+        });
+      } else if (match.sel !== null) {
+        match.fuseBody = match.fuseBody === match.sel ? null : match.sel;
+        renderShop();
+      }
+      return true;
+    case 'KeyC': {
+      const u = E.upgradable(g, ME)[0];
+      if (u) shopAct(() => E.upgrade(g, ME, u.id, u.stars));
+      return true;
+    }
+    case 'Enter':
+    case 'NumpadEnter': goBattle(); return true;
+    case 'Escape':
+      match.sel = null;
+      match.fuseBody = null;
+      match.removeMode = false;
+      match.hint = '';
+      renderShop();
+      return true;
+    default: return false;
+  }
+}
+
+function onKey(ev) {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (ev.target instanceof Element && ev.target.matches('input, select, textarea')) return;
+  const enter = ev.code === 'Enter' || ev.code === 'NumpadEnter';
+  let handled = false;
+  if (!$('roundResult').hidden) handled = enter && clickFirst('rrButtons'); // 라운드 결과 창
+  else if (!$('result').hidden) {
+    if (enter) {
+      $('again').click();
+      handled = true;
+    }
+  } else if (!$('battle').hidden && game) handled = battleKey(ev);
+  else if (!$('shop').hidden && match) handled = shopKey(ev);
+  else if (!$('draft').hidden && match) {
+    const d = digitOf(ev);
+    if (d >= 1 && d <= 3) {
+      draftChoose(d - 1);
+      handled = true;
+    }
+  }
+  if (handled) ev.preventDefault();
+}
 
 // 위의 let/const가 준비된 뒤에 시작한다
 initMatch();
