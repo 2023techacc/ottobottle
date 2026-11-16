@@ -999,7 +999,7 @@ function renderLobby() {
   const many = mode.players > 2;
   $('mOpCommanderRow').hidden = many;
   $('mOpNote').textContent = many
-    ? `상대는 봇 ${mode.players - 1}명이고 지휘관은 무작위다. 라운드마다 결투, 삼파전, 연합전, 보스 레이드, 난투장이 돌아가며 나온다.`
+    ? `상대는 봇 ${mode.players - 1}명이고 지휘관은 무작위다. 라운드마다 결투, 난투장, 연합전, 보스 레이드가 돌아가며 나온다.`
     : '';
   $('mLead').textContent = many
     ? `지휘관과 픽 카드 ${need}종을 고른 뒤, 상점과 전투를 반복한다. HP ${econ.playerHp}이 0이 되면 탈락하고, 마지막까지 남으면 이긴다. 1~2라운드는 중립 몬스터와 싸우는 연습이다.`

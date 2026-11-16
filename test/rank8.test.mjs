@@ -48,12 +48,12 @@ test('8인 랭크: HP 100, 픽 카드 5종, 같은 카드를 여덟 명이 고�
   assert.equal(E.validatePicks([...PICKS, 'rats'], ECON8).ok, false);
 });
 
-test('8인 로테이션: 연습 2판, 결투 사이에 삼파전·연합전·보스·난투장이 끼어든다', () => {
+test('8인 로테이션: 연습 2판, 결투 사이에 난투장·연합전·보스가 끼어든다 (삼파전은 없다)', () => {
   const g = mk();
   const formats = [];
   for (let r = 1; r <= 14; r++) formats.push(E.formatOf(g, r));
   assert.deepEqual(formats, [
-    'practice', 'practice', 'duel', 'duel', 'melee3', 'duel', 'alliance', 'duel', 'boss', 'melee4', 'duel', 'melee3', 'duel', 'melee4',
+    'practice', 'practice', 'duel', 'duel', 'melee4', 'duel', 'alliance', 'duel', 'boss', 'melee4', 'duel', 'melee4', 'duel', 'melee4',
   ]);
   assert.equal(E.formatOf(g, 15), 'duel');
   assert.equal(E.formatOf(g, 16), 'melee4');
@@ -62,11 +62,11 @@ test('8인 로테이션: 연습 2판, 결투 사이에 삼파전·연합전·보
   assert.ok(E.roundInfo(g, 5).battlefield);
 });
 
-test('남은 인원에 맞추기: 3명이면 삼파전, 2명이면 결투', () => {
+test('남은 인원에 맞추기: 3명이면 결투 (한 명은 유령과), 2명이면 결투', () => {
   const g = mk();
   for (const i of [3, 4, 5, 6, 7]) g.players[i].alive = false;
-  assert.equal(E.formatOf(g, 10), 'melee3');
-  assert.equal(E.formatOf(g, 11), 'melee3');
+  assert.equal(E.formatOf(g, 10), 'duel');
+  assert.equal(E.formatOf(g, 11), 'duel');
   assert.equal(E.formatOf(g, 9), 'boss');
   g.players[2].alive = false;
   assert.equal(E.formatOf(g, 10), 'duel');
@@ -75,17 +75,15 @@ test('남은 인원에 맞추기: 3명이면 삼파전, 2명이면 결투', () =
 
 // ───────────────────────── 조 편성과 유령 ─────────────────────────
 
-test('조 편성: 결투 4조, 삼파전은 유령 1개를 더해 3조, 난투장 2조, 연합전 4팀', () => {
+test('조 편성: 결투 4조, 난투장 2조, 연합전 4팀. 3명이 남으면 결투 2조에 유령 1개', () => {
   const g = mk();
   advanceTo(g, 3);
   assert.deepEqual(g.groups.map((x) => x.length), [2, 2, 2, 2]);
   assert.equal(new Set(g.groups.flat().map((m) => m.p)).size, 8, '모두 한 번씩 들어간다');
   advanceTo(g, 5);
-  assert.deepEqual(g.groups.map((x) => x.length), [3, 3, 3]);
-  const ghosts = g.groups.flat().filter((m) => m.p === null);
-  assert.equal(ghosts.length, 1);
-  const ghostGroup = g.groups.find((x) => x.some((m) => m.p === null));
-  assert.ok(!ghostGroup.some((m) => m.p === ghosts[0].ghostOf), '탈락자가 없으면 다른 조의 플레이어를 복제한다');
+  assert.deepEqual(g.groups.map((x) => x.length), [4, 4]);
+  assert.equal(g.groups.flat().filter((m) => m.p === null).length, 0);
+  assert.equal(E.roundBattles(g)[0].cfg.format, 'melee4');
   advanceTo(g, 7);
   assert.deepEqual(g.groups.map((x) => x.length), [4, 4]);
   const battles = E.roundBattles(g);
@@ -94,6 +92,17 @@ test('조 편성: 결투 4조, 삼파전은 유령 1개를 더해 3조, 난투�
   advanceTo(g, 10);
   assert.deepEqual(g.groups.map((x) => x.length), [4, 4]);
   assert.equal(E.roundBattles(g)[0].cfg.format, 'melee4');
+  // 3명만 남기면 결투 2조: 한 조에는 유령이 들어온다
+  const h = mk();
+  advanceTo(h, 10);
+  for (const i of [3, 4, 5, 6, 7]) h.players[i].alive = false;
+  h.eliminated.push(3, 4, 5, 6, 7);
+  fake(h);
+  assert.equal(E.formatOf(h), 'duel');
+  assert.deepEqual(h.groups.map((x) => x.length), [2, 2]);
+  const ghosts = h.groups.flat().filter((m) => m.p === null);
+  assert.equal(ghosts.length, 1);
+  assert.equal(ghosts[0].ghostOf, 7, '가장 최근에 탈락한 플레이어의 유령');
 });
 
 test('유령 보드: 탈락자의 마지막 덱을 복제하고, 유령은 피해를 받지 않는다', () => {
@@ -124,23 +133,6 @@ test('유령 보드: 탈락자의 마지막 덱을 복제하고, 유령은 피�
 
 // ───────────────────────── 형식별 피해 ─────────────────────────
 
-test('삼파전 피해: 1위 0%, 2위 50%, 3위 100% (남은 유닛은 살아남은 상대 전원의 것)', () => {
-  const g = mk();
-  advanceTo(g, 5);
-  const base = E.roundInfo(g).baseDamage;
-  assert.equal(base, 3);
-  const b = E.roundBattles(g)[0];
-  const s = fake(g, (x) => (x === E.roundBattles(g)[0] || x.sides.join() === b.sides.join()
-    ? { ranks: [0, 1, 2], survivors: [4, 2, 0], dead: [false, false, true] } : {}));
-  const r = (p) => s.results.find((x) => x.p === p);
-  const [a, c, d] = b.sides;
-  assert.equal(r(a).damage, 0);
-  assert.equal(r(c).damage, Math.ceil((base + 4) * 0.5), '2위: 상대 1위의 유닛 4');
-  assert.equal(r(d).damage, base + 4 + 2, '3위: 살아남은 두 상대의 유닛 6');
-  assert.deepEqual([r(a).won, r(c).won, r(d).won], [true, null, false]);
-  assert.equal(g.players[a].streak, 1);
-  assert.equal(g.players[d].streak, -1);
-});
 
 test('난투장 피해: 1위 0%, 2위 30%, 3위 70%, 4위 100%. 군주는 난전에서 30% 덜 받는다', () => {
   const g = mk(8, { commanders: ['lord', 'lord', 'lord', 'lord', 'lord', 'lord', 'lord', 'lord'] });
@@ -253,7 +245,7 @@ test('봇 8명 경기: 끝까지 진행되고 1위부터 8위까지 순위가 �
     assert.deepEqual([...game.players.map((P) => P.place)].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8]);
     assert.equal(game.players[game.winner].place, 1);
     assert.equal(game.placements[0], game.winner);
-    for (const f of ['practice', 'duel', 'melee3', 'alliance', 'boss', 'melee4']) assert.ok(seen.has(f), `${f} 형식을 거쳤다`);
+    for (const f of ['practice', 'duel', 'alliance', 'boss', 'melee4']) assert.ok(seen.has(f), `${f} 형식을 거쳤다`);
   }
 });
 

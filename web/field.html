@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>카드 오토배틀러 (가제) — 유닛 전투 (실험)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <nav class="modetabs" id="tabs">
+      <a class="tablink" href="index.html">← 한 경기 / 전투 한 판</a>
+      <span class="tablink on">유닛 전투 (실험)</span>
+    </nav>
+
+    <!-- ── 설정 ── -->
+    <section id="fsetup">
+      <h1>카드 오토배틀러 <small>(가제) · 유닛 소환 전투 시제품</small></h1>
+      <p class="lead">칸은 배치할 때만 쓴다. 내 본진 앞의 칸에 유닛을 놓으면, 그 뒤로는 칸과 상관없이 가장 가까운 적에게 걸어가 사거리 안에서 싸운다.
+        유닛끼리는 겹치지 않고 서로 밀어낸다. 덱·손패·마나·카드는 그대로다. 아직 전투 한 판만 되고, 상점이나 8인 경기에는 연결하지 않았다.<br>
+        결투와 연합전은 상대 지휘관(본진)을 쓰러뜨리면 이긴다. <b>난투장은 본진을 치지 않는다.</b> 한가운데 원 안에 유닛이 가장 많은 사람이 점수를 얻고, 점수로 순위를 정한다.</p>
+      <div class="setup-grid">
+        <fieldset>
+          <legend>나</legend>
+          <label>지휘관 <select id="myCommander"></select></label>
+          <label>덱 <select id="myDeckType">
+            <option value="start">시작 덱 (8장)</option>
+            <option value="mid" selected>중반 덱 (무작위)</option>
+          </select></label>
+          <p class="passive" id="myPassive"></p>
+          <div class="decklist" id="myDeck"></div>
+        </fieldset>
+        <fieldset>
+          <legend>상대 (봇)</legend>
+          <label>지휘관 <select id="opCommander"></select></label>
+          <label>덱 <select id="opDeckType">
+            <option value="start">시작 덱 (8장)</option>
+            <option value="mid" selected>중반 덱 (무작위)</option>
+          </select></label>
+          <label>난이도 <select id="botLevel">
+            <option value="easy">쉬움</option>
+            <option value="normal" selected>보통</option>
+            <option value="hard">어려움</option>
+          </select></label>
+          <p class="passive" id="opPassive"></p>
+          <div class="decklist" id="opDeck"></div>
+        </fieldset>
+        <fieldset>
+          <legend>전투</legend>
+          <label>형식 <select id="format"></select></label>
+          <label>전장 <select id="battlefield"></select></label>
+          <label>시드 <input id="seed" type="number" min="1" step="1"></label>
+          <div class="row">
+            <button id="reroll" type="button">덱 다시 뽑기</button>
+            <button id="start" type="button" class="primary">전투 시작</button>
+          </div>
+          <p class="note" id="rulesNote"></p>
+        </fieldset>
+      </div>
+      <h2 class="sec">유닛의 사거리와 걷는 속도 <small>배치 칸 한 변이 2다</small></h2>
+      <div id="statTable"></div>
+    </section>
+
+    <!-- ── 전투 ── -->
+    <section id="fbattle" hidden>
+      <header class="topbar">
+        <div class="clock"><span id="clock">0.0</span><small>/ <span id="clockMax">40</span>초</small></div>
+        <div class="timebar"><div id="timefill"></div><div id="overtimeMark"></div></div>
+        <div class="field" id="fieldInfo"></div>
+        <div class="speed" id="speed">
+          <button data-speed="0">일시정지</button>
+          <button data-speed="0.5">0.5×</button>
+          <button data-speed="1" class="on">1×</button>
+          <button data-speed="2">2×</button>
+        </div>
+        <button id="quit" type="button">그만두기</button>
+      </header>
+      <div class="arena">
+        <div class="main">
+          <div class="fplayers" id="players"></div>
+          <div class="arenawrap"><div class="farena" id="arena"></div></div>
+          <div class="commander me" id="cmd0"></div>
+          <div class="hint" id="hint"></div>
+          <div class="hand" id="hand"></div>
+        </div>
+        <aside class="log">
+          <details class="keys" open>
+            <summary>단축키</summary>
+            <table>
+              <tr><td><kbd>1</kbd>~<kbd>7</kbd></td><td>손패 카드 고르기</td></tr>
+              <tr><td><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd></td><td>내 배치 칸 앞줄 1~5</td></tr>
+              <tr><td><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>G</kbd></td><td>내 배치 칸 가운뎃줄</td></tr>
+              <tr><td><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd><kbd>B</kbd></td><td>내 배치 칸 뒷줄 (본진 앞)</td></tr>
+              <tr><td><kbd>`</kbd></td><td>다시 뽑기 (누른 뒤 버릴 카드 번호)</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>선택 취소</td></tr>
+              <tr><td><kbd>Space</kbd>, <kbd>-</kbd> <kbd>=</kbd></td><td>일시정지, 느리게·빠르게</td></tr>
+            </table>
+            <p class="note">유닛(적이든 내 것이든)은 마우스로 눌러서 고른다.</p>
+          </details>
+          <h2>기록</h2>
+          <ol id="log"></ol>
+        </aside>
+      </div>
+    </section>
+
+    <div id="result" hidden>
+      <div class="result-box">
+        <h2 id="resultTitle"></h2>
+        <p id="resultDetail"></p>
+        <table id="resultStats"></table>
+        <div class="row">
+          <button id="again" type="button" class="primary">새 시드로 다시 <small>Enter</small></button>
+          <button id="replay" type="button">같은 시드로 다시</button>
+          <button id="toSetup" type="button">설정으로</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="field.js"></script>
+</body>
+</html>

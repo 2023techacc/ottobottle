@@ -15,14 +15,14 @@ export const MODES = Object.freeze({
 
 /** 8인 로테이션 (기획서 예시). 1~2라운드는 연습, 15라운드부터는 남은 인원에 맞춘다. */
 export const ROTATION = Object.freeze({
-  3: 'duel', 4: 'duel', 5: 'melee3', 6: 'duel', 7: 'alliance', 8: 'duel', 9: 'boss',
-  10: 'melee4', 11: 'duel', 12: 'melee3', 13: 'duel', 14: 'melee4',
+  3: 'duel', 4: 'duel', 5: 'melee4', 6: 'duel', 7: 'alliance', 8: 'duel', 9: 'boss',
+  10: 'melee4', 11: 'duel', 12: 'melee4', 13: 'duel', 14: 'melee4',
 });
 
-export const FORMAT_SIZE = Object.freeze({ duel: 2, melee3: 3, melee4: 4, alliance: 4 });
+export const FORMAT_SIZE = Object.freeze({ duel: 2, melee4: 4, alliance: 4 });
 
 /** 난전에서 순위별로 받는 피해 비율 (결투 피해 기준) */
-export const MELEE_DAMAGE = Object.freeze({ melee3: [0, 0.5, 1], melee4: [0, 0.3, 0.7, 1] });
+export const MELEE_DAMAGE = Object.freeze({ melee4: [0, 0.3, 0.7, 1] });
 
 export const DEFAULT_ECON = Object.freeze({
   // 아래 두 값은 모드(MODES)가 덮어쓴다
@@ -216,7 +216,7 @@ export function formatOf(game, round = game.round) {
   if (game.mode === 'duel' || alive <= 2) return 'duel';
   const scheduled = ROTATION[round] || (round % 2 === 1 ? 'duel' : 'melee4'); // 15라운드부터 결투와 난투장을 번갈아
   if (scheduled === 'boss') return 'boss';
-  if (alive === 3) return 'melee3'; // 3명이 남으면 매 라운드 삼파전
+  if (alive === 3) return 'duel'; // 3명이 남으면 매 라운드 결투 (한 명은 유령 보드와 붙는다)
   return scheduled;
 }
 
@@ -608,7 +608,7 @@ function ghostConfig(game, q) {
 
 /**
  * 이번 라운드에 치를 전투 목록 (game.groups 순서).
- *   kind: 'practice' | 'boss' | 'duel' | 'melee3' | 'melee4' | 'alliance'
+ *   kind: 'practice' | 'boss' | 'duel' | 'melee4' | 'alliance'
  *   sides: 전투의 자리마다 플레이어 번호. 유령·중립 몬스터·보스 자리는 null.
  *   ghosts: 자리마다 복제한 플레이어 번호 (유령이 아니면 null)
  * cfg는 createBattle / runBattle에 그대로 넘기면 된다. 연합전은 앞의 두 자리와 뒤의 두 자리가 한 팀이다.

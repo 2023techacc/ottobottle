@@ -59,11 +59,13 @@ export class PaceStats {
     this.overtime = 0;
     this.draws = 0;
     this.p0 = 0;
+    this.sides = 0;
     this.sum = { cardsPlayed: 0, redraws: 0, manaSpent: 0, manaWasted: 0, handFullMs: 0, manaCapMs: 0, handSize: 0, totalMs: 0, maxManaEnd: 0 };
   }
   add(state) {
     const r = state.result;
     this.n++;
+    this.sides += state.players.length;
     this.lens.push(r.timeMs / 1000);
     if (r.reason === 'time') this.timeouts++;
     if (r.timeMs > state.rules.overtimeMs) this.overtime++;
@@ -84,7 +86,7 @@ export class PaceStats {
   }
   summary() {
     const lens = [...this.lens].sort((a, b) => a - b);
-    const sides = this.n * 2;
+    const sides = this.sides;
     const s = this.sum;
     return {
       games: this.n,

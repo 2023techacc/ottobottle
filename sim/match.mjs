@@ -21,7 +21,7 @@ const SEED = Number(args.seed || 1);
 const ECON = args.econ ? JSON.parse(args.econ) : {};
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));
 const STYLES = Object.keys(E.SHOP_STYLES);
-const FORMAT_NAMES = { practice: '연습', duel: '결투', melee3: '삼파전', melee4: '난투장', alliance: '연합전', boss: '보스 레이드' };
+const FORMAT_NAMES = { practice: '연습', duel: '결투', melee4: '난투장', alliance: '연합전', boss: '보스 레이드' };
 const t0 = Date.now();
 
 function playGame(seed) {

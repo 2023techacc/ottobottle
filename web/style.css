@@ -294,3 +294,81 @@ kbd {
 .cell.target .keyhint { color: var(--gold); font-weight: 700; }
 .pboard.focus { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 8px; }
 button small { opacity: .7; margin-left: 4px; }
+
+/* ── 유닛 소환 전투 (실험) ── */
+.tablink {
+  display: inline-block; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); text-decoration: none;
+}
+.tablink.on { background: #2b62c9; border-color: #3b76e6; }
+a.tablink:hover { border-color: #55627c; }
+.fgrid { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+.frow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.frow.midline { margin-top: 10px; position: relative; }
+.frow.midline::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; border-top: 2px dashed #4a556b; }
+.fcell { min-height: 84px; border-style: solid; }
+.fcell.mine { background: #1c2b45; border-color: #35558f; }
+.fcell.foe { background: #3a2026; border-color: #8a4747; }
+.fcell .unit .uname { padding-left: 0; font-size: 12px; }
+.fcell .unit .stats { font-size: 11px; }
+.fcell .bar.mv i { background: #e0a94a; }
+.fcell .unit.own1 .bar.hp i { background: var(--enemy); }
+.fcell .unit.own0 .bar.hp i { background: var(--good); }
+.fcell.strike { animation: strike .18s; }
+@keyframes strike { from { box-shadow: 0 0 0 3px #f2c14e88 inset; } to { box-shadow: none; } }
+#fbattle .commander { margin: 0; }
+
+/* ── 유닛 전투: 칸 없는 필드 ── */
+.fplayers { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.fplayer { flex: 1 1 150px; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--c, #888); border-radius: 8px; padding: 5px 8px; font-size: 12px; min-width: 0; }
+.fplayer.dead { opacity: .4; }
+.fplayer .hpbar { position: relative; height: 14px; background: #101319; border-radius: 4px; overflow: hidden; margin-top: 3px; }
+.fplayer .hpbar i { position: absolute; inset: 0 auto 0 0; background: var(--c, #888); transition: width .15s; }
+.fplayer .hpbar span { position: relative; display: block; text-align: center; font-size: 11px; line-height: 14px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+.fplayer.shake .hpbar { animation: shake .25s; }
+.fplayer small { color: var(--dim); }
+.arenawrap { display: flex; justify-content: center; }
+.farena {
+  position: relative; width: 100%; background: #141922; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background-image: radial-gradient(circle at 50% 50%, #1b2230 0, #141922 70%);
+}
+.farena.circle { border-radius: 50%; overflow: visible; margin: 28px; } /* 둘레에 걸친 본진이 잘리지 않게 */
+.farena svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.dcell { position: absolute; border: 1px dashed #303a4d; border-radius: 6px; transform: translate(-50%, -50%); }
+.dcell.mine { border-color: #3b5a8f; background: #1a243733; }
+.dcell.mine.free.target { border: 2px solid var(--gold); background: #f2c14e22; cursor: pointer; }
+.dcell.blocked { opacity: .25; background: repeating-linear-gradient(45deg, #171a20, #171a20 5px, #222733 5px, #222733 10px); }
+.dcell .keyhint { position: absolute; right: 3px; bottom: 1px; font: 10px/1 ui-monospace, Consolas, monospace; color: #55627c; }
+.dcell.target .keyhint { color: var(--gold); font-weight: 700; }
+.fbase { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; border: 3px solid var(--c, #888); background: #0d1016; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--c, #fff); }
+.fbase.dead { opacity: .25; }
+.funit {
+  position: absolute; left: 0; top: 0; border-radius: 50%; background: var(--c, #888); color: #fff;
+  display: grid; place-items: center; text-align: center; font-size: 10px; line-height: 1.05; font-weight: 700;
+  box-shadow: 0 0 0 2px #0b0e14, 0 2px 6px #0008; will-change: transform; cursor: default; text-shadow: 0 1px 2px #000a;
+}
+.funit.ranged { border-radius: 30%; }
+.funit.target { box-shadow: 0 0 0 3px var(--gold), 0 0 10px var(--gold); cursor: pointer; z-index: 3; }
+.funit.hit { animation: hit .2s; }
+.funit .hp { position: absolute; left: 8%; right: 8%; bottom: -7px; height: 4px; background: #0b0e14; border-radius: 2px; overflow: hidden; }
+.funit .hp i { display: block; height: 100%; background: var(--good); }
+.funit .gz { position: absolute; left: 8%; right: 8%; top: -6px; height: 3px; background: #0b0e14; border-radius: 2px; overflow: hidden; }
+.funit .gz i { display: block; height: 100%; background: var(--gauge); }
+.funit.casting .gz i { background: var(--danger); }
+.ftele { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid var(--danger); background: #ff4d4d22; animation: pulse .5s infinite alternate; pointer-events: none; display: grid; place-items: center; color: var(--danger); font-weight: 700; font-size: 12px; }
+.ffloat { position: absolute; font-weight: 800; font-size: 14px; color: #ff8080; text-shadow: 0 1px 3px #000; animation: floatup .7s forwards; pointer-events: none; z-index: 5; }
+.ffloat.heal { color: var(--good); }
+.shot { stroke-width: 2; opacity: .9; animation: fade .25s forwards; }
+@keyframes fade { to { opacity: 0; } }
+
+/* 난투장: 가운데 점령 원 */
+.fzone {
+  position: absolute; transform: translate(-50%, -50%); border-radius: 50%;
+  border: 2px dashed var(--c, #8892a6); background: color-mix(in srgb, var(--c, #8892a6) 10%, transparent);
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 4px;
+  font-size: 11px; color: var(--c, #8892a6); pointer-events: none; transition: border-color .2s, background .2s;
+}
+.fzone.held { border-style: solid; background: color-mix(in srgb, var(--c) 20%, transparent); font-weight: 700; }
+.hpbar.score i { background: #c9a227; }
+.hpbar.score.holding i { background: #f2c94c; }
+.hpbar.score.holding { box-shadow: 0 0 0 1px #f2c94c; }
