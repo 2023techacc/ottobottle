@@ -50,6 +50,7 @@
         <fieldset>
           <legend>경기</legend>
           <label>모드 <select id="mMode"></select></label>
+          <label>전투 <select id="mBattle"></select></label>
           <label>상점 시간 <select id="mShopTime">
             <option value="0" selected>제한 없음</option>
             <option value="60">60초</option>
@@ -59,7 +60,7 @@
           <div class="row">
             <button id="mStart" type="button" class="primary">경기 시작</button>
           </div>
-          <p class="note">전투 규칙은 "E. 카드 위주"다. 선봉은 없고, 상점 레벨에 따라 시작 카드를 1~3장 고른다.</p>
+          <p class="note" id="mBattleNote"></p>
         </fieldset>
       </div>
     </section>
@@ -230,6 +231,9 @@
         </aside>
       </div>
     </section>
+
+    <!-- ── 한 경기: 유닛 전투 화면 (fieldview.js가 채운다) ── -->
+    <section id="fieldBattle" hidden></section>
 
     <!-- ── 한 경기: 라운드 결과 ── -->
     <div id="roundResult" class="overlay" hidden>

@@ -35,6 +35,7 @@ export const FIELD_STATS = Object.freeze({
   lancer: { range: 1.5, speed: 4.4, radius: 0.5 },
   pyro: { range: 8, speed: 2.8, radius: 0.4 },
   colossus: { range: 1.7, speed: 2.2, radius: 0.8 },
+  boss: { range: 2.2, speed: 0, radius: 1.3 }, // 보스 레이드의 고대 골렘: 제자리에 서 있다
 });
 
 /** 유닛 전투의 기본 규칙 수치 (DEFAULT_RULES 위에 덮어쓴다) */
@@ -64,10 +65,15 @@ export const FIELD_RULES = Object.freeze({
   killScore: 1,
   killPerMana: 0,
   killZoneMult: 2,
+  // 보스 레이드: 보스는 필드 위쪽 가운데에 서 있고, 10초마다 전조 뒤에 자기 주변을 친다.
+  // 지휘관은 피해를 받지 않고 40초를 채운다. 보스에게 준 피해가 점수다.
+  bossY: 2.5,
+  bossSlamRadius: 3.8,
 });
 
 /** 전열·후열이 없어져서 뜻이 달라진 카드의 설명 */
 export const FIELD_TEXT = Object.freeze({
+  boss: '보스. 쓰러지지 않고 움직이지 않는다. 10초마다 전조 1.5초 뒤 자기 주변 넓은 범위에 피해',
   shield: '◆수호: 가까이 있는 아군이 받는 피해의 20%를 대신 받는다',
   dagger: '◆암살: 적 원거리 유닛부터 노린다',
   lancer: '◆관통: 표적 바로 뒤의 적에게도 50% 피해',
@@ -111,7 +117,8 @@ export function makeArena(format, meleeRadius = 10) {
     }
     return { shape: 'circle', r, seats };
   }
-  if (format !== 'duel') throw new Error(`모르는 형식: ${format}`);
+  // 보스 레이드도 결투와 같은 필드다. 1번 자리가 보스.
+  if (format !== 'duel' && format !== 'boss') throw new Error(`모르는 형식: ${format}`);
   return { shape: 'rect', w: 10, h: 12, seats: [seat(0, -6, 0, 1), seat(0, 6, 0, -1)] };
 }
 
@@ -163,7 +170,8 @@ function clampToArena(state, u) {
 /**
  * @param {object} cfg
  * @param {number} cfg.seed
- * @param {'duel'|'melee4'|'alliance'} [cfg.format]  연합전은 0·1번이 한 팀, 2·3번이 한 팀. 난투장은 중앙 점령
+ * @param {'duel'|'melee4'|'alliance'|'boss'} [cfg.format]  연합전은 0·1번이 한 팀, 2·3번이 한 팀. 난투장은 중앙 점령.
+ *   보스 레이드는 players[1]에 { boss: true }를 주면 그 자리에 보스 유닛 하나가 선다.
  * @param {Array<{commander:string, deck:Array<{id:string,stars?:number,fuse?:string}>, name?:string, seed?:number,
  *   opening?:number[], bonus?:{startMana?:number,maxMana?:number,startHand?:number,openingPicks?:number}}>} cfg.players
  * @param {string|null} [cfg.battlefield]
@@ -207,7 +215,7 @@ export function createField(cfg) {
       team: format === 'alliance' ? Math.floor(idx / 2) : idx,
       dead: false,
       deadAt: null,
-      isBoss: false,
+      isBoss: format === 'boss' && Boolean(pc.boss),
       commander: pc.commander,
       name: pc.name || COMMANDERS[pc.commander].name,
       base: { x: s.bx, y: s.by },
@@ -252,6 +260,15 @@ export function createField(cfg) {
     if (picked.length) P.deck = [...P.deck.filter((c) => !picked.includes(c)), ...[...picked].reverse()];
     for (let i = 0; i < startHand; i++) drawCard(state, P);
   });
+
+  // 보스: 지휘관은 쓰러지지 않고, 보스 유닛 하나가 필드 위쪽 가운데에 선다
+  for (const P of state.players) {
+    if (!P.isBoss) continue;
+    P.hp = 1e9;
+    P.maxHp = 1e9;
+    const s = arena.seats[P.idx];
+    summonUnit(state, P.idx, 0, s.by + s.fy * (Math.abs(s.by) - rules.bossY), { id: 'boss' });
+  }
   return state;
 }
 
@@ -511,6 +528,7 @@ function dealDamage(state, target, amount, opts = {}) {
     }
   }
   target.hp -= amount;
+  target.damageTaken = (target.damageTaken || 0) + amount; // 보스 레이드 점수
   dealt += amount;
   if (opts.source && opts.source.owner !== target.owner) state.players[opts.source.owner].stats.unitDamage += amount;
   if (opts.source && isEnemy(state, opts.source.owner, target.owner)) {
@@ -534,6 +552,7 @@ function simultaneously(state, fn) {
 }
 
 function damageCommander(state, p, amount, source) {
+  if (state.format === 'boss') return; // 보스 레이드에서는 지휘관이 피해를 받지 않는다 (40초를 채운다)
   amount *= state.rules.commanderDamageMult;
   state.players[p].hp -= amount;
   if (source) state.players[source.owner].stats.commanderDamage += amount;
@@ -601,7 +620,7 @@ function drawCard(state, P) {
 }
 
 function tickPlayer(state, P, dt) {
-  if (P.dead) return;
+  if (P.dead || P.isBoss) return;
   const r = state.rules;
   const t = state.timeMs;
   P.maxMana = Math.min(r.maxManaCap, r.startMaxMana + Math.floor(t / r.maxManaIntervalMs)) + P.maxManaBonus;
@@ -640,6 +659,8 @@ export function step(state) {
   for (const u of state.units) {
     if (u.buffs.length) u.buffs = u.buffs.filter((b) => b.until === undefined || b.until > t);
     if (u.slows.length) u.slows = u.slows.filter((x) => x > t);
+    // 시간으로 차는 필살기 (보스): 전조 중에도 찬다 (정확히 10초마다)
+    if (u.ult && u.ult.timerMs) u.gauge = Math.min(r.gaugeMax, u.gauge + (r.gaugeMax * dt) / u.ult.timerMs);
   }
   if (state.battlefield === 'volcano' && t % 10000 === 0) {
     for (const u of [...state.units]) dealDamage(state, u, u.maxHp * 0.05, { noGuard: true });
@@ -747,8 +768,10 @@ function separate(state) {
           dy = Math.sin(ang);
           d = 1;
         }
-        const wa = a.moving ? 1 : 0.25;
-        const wb = b.moving ? 1 : 0.25;
+        // 보스처럼 걷지 않는 유닛(속도 0)은 밀리지 않는다
+        const wa = a.speed <= 0 ? 0 : a.moving ? 1 : 0.25;
+        const wb = b.speed <= 0 ? 0 : b.moving ? 1 : 0.25;
+        if (wa + wb === 0) continue;
         const push = min - d;
         mx[i] -= (dx / d) * push * (wa / (wa + wb));
         my[i] -= (dy / d) * push * (wa / (wa + wb));
@@ -876,12 +899,14 @@ function triggerUlt(state, u) {
     emit(state, { type: 'ultReady', p: u.owner, unitId: u.id, kind: ult.kind });
     return;
   }
-  const tg = chooseTarget(state, u);
-  if (!tg || !tg.unit || !tg.inRange) return; // 사거리 안에 칠 유닛이 없으면 게이지를 쥐고 기다린다
+  const boss = u.defId === 'boss';
+  const tg = boss ? null : chooseTarget(state, u);
+  // 사거리 안에 칠 유닛이 없으면 게이지를 쥐고 기다린다. 보스는 정해진 때마다 무조건 친다.
+  if (!boss && (!tg || !tg.unit || !tg.inRange)) return;
   // 범위는 전조가 시작될 때의 자리로 정해진다. 그 사이에 벗어나면 맞지 않는다.
   const g = ult.kind === 'cross'
     ? { x: tg.x, y: tg.y, radius: r.blastRadius } // 화염술사: 표적 주변
-    : { x: u.x, y: u.y, radius: r.slamRadius }; // 거신: 자기 주변
+    : { x: u.x, y: u.y, radius: boss ? r.bossSlamRadius : r.slamRadius }; // 거신·보스: 자기 주변
   u.gauge = 0;
   u.telegraphing = true;
   state.telegraphs.push({
@@ -969,6 +994,13 @@ function checkEnd(state) {
     ranks,
     order: order.map((P) => P.idx),
   };
+  if (state.format === 'boss') {
+    // 보스에게 준 피해가 점수다
+    state.result.bossDamage = state.players.map((P) => {
+      const foe = state.players.find((Q) => Q.isBoss && Q.idx !== P.idx);
+      return foe ? unitsOf(state, foe.idx).reduce((s, u) => s + (u.damageTaken || 0), 0) : 0;
+    });
+  }
   emit(state, { type: 'end', winner: state.result.winner, reason: state.result.reason });
 }
 

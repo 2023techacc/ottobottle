@@ -236,7 +236,7 @@ test('봇 8명 경기: 끝까지 진행되고 1위부터 8위까지 순위가 �
       for (const P of game.players) E.runShopBot(game, P.idx);
       assert.equal(E.poolTotal(game), total, `seed ${seed} round ${game.round}`);
       for (const id of E.POOL_CARD_IDS) assert.ok(game.pool[id] >= 0);
-      const battles = E.roundBattles(game).map((b) => ({ ...b, state: E.runBattle(b.cfg).state }));
+      const battles = E.roundBattles(game).map((b) => ({ ...b, state: E.runRoundBattle(b).state }));
       const real = battles.flatMap((b) => b.sides).filter((p) => p !== null);
       assert.equal(new Set(real).size, E.aliveCount(game), '살아 있는 모두가 한 번씩 싸운다');
       seen.add(E.formatOf(game));
@@ -257,7 +257,7 @@ test('8인 경기도 같은 시드면 똑같이 진행된다', () => {
     for (const P of game.players) E.runDraftBot(game, P.idx);
     while (game.phase !== 'over') {
       for (const P of game.players) E.runShopBot(game, P.idx);
-      E.finishRound(game, E.roundBattles(game).map((b) => ({ ...b, state: E.runBattle(b.cfg).state })));
+      E.finishRound(game, E.roundBattles(game).map((b) => ({ ...b, state: E.runRoundBattle(b).state })));
     }
     return game;
   };

@@ -1,6 +1,7 @@
 // 플레이 테스트 화면. 규칙은 전부 ../engine 에 있고, 여기는 그리기와 입력만 한다.
 
 import * as E from '../engine/index.js';
+import { createFieldView, endReason, FIELD_EFFECTS } from './fieldview.js';
 
 const { FRONT, BACK } = E;
 const ME = 0;
@@ -217,7 +218,7 @@ function startBattle(sameSeed = false) {
 
 /** 지금 보이는 화면을 바꾼다 */
 function showScreen(name) {
-  for (const id of ['lobby', 'setup', 'draft', 'shop', 'battle']) $(id).hidden = id !== name;
+  for (const id of ['lobby', 'setup', 'draft', 'shop', 'battle', 'fieldBattle']) $(id).hidden = id !== name;
   $('modeTabs').hidden = name !== 'lobby' && name !== 'setup';
   $('result').hidden = true;
   $('roundResult').hidden = true;
@@ -823,6 +824,13 @@ window.__engine = E;
 
 let match = null; // { game, botLevel, styles, shopSeconds, sel, fuseBody, timerId, deadline, hint }
 const lobby = { picks: [] };
+// 유닛 전투 화면 (경기의 전투 방식이 유닛 전투일 때 쓴다)
+const fieldView = createFieldView($('fieldBattle'), {
+  onQuit() {
+    endMatch();
+    showScreen('lobby');
+  },
+});
 const STYLE_NAMES = { eco: '저축형', balanced: '균형형', spend: '소비형' };
 const FORMAT_NAMES = {
   practice: '연습 (중립 몬스터)', duel: '결투', melee3: '삼파전 (3인 난전)', melee4: '난투장 (4인 난전)', alliance: '연합전 (2:2)', boss: '보스 레이드',
@@ -837,6 +845,8 @@ const playerLabel = (P) => (P.name === E.COMMANDERS[P.commander].name ? P.name :
 function initMatch() {
   const cmds = E.COMMANDER_IDS.map((id) => [id, E.COMMANDERS[id].name]);
   fillSelect($('mMode'), Object.entries(E.MODES).map(([id, m]) => [id, `${m.name} (${m.players}명, HP ${m.econ.playerHp}, 픽 ${m.econ.picks}종)`]), 'rank8');
+  fillSelect($('mBattle'), Object.entries(E.BATTLE_KINDS), 'field');
+  $('mBattle').addEventListener('change', renderLobby);
   fillSelect($('mCommander'), cmds, 'general');
   fillSelect($('mOpCommander'), [['random', '무작위'], ...cmds], 'random');
   $('mSeed').value = String(1 + Math.floor(Math.random() * 99999));
@@ -996,6 +1006,9 @@ function renderLobby() {
     })
     .join('');
   $('mStart').disabled = lobby.picks.length !== need;
+  $('mBattleNote').textContent = $('mBattle').value === 'field'
+    ? '유닛이 필드에 소환돼 걸어가서 싸운다. 결투·연합전은 본진을 부수면 이기고, 난투장은 가운데 원 점령과 처치 점수로 순위를 정한다. 상점 레벨에 따라 시작 카드를 1~3장 고른다.'
+    : '예전 칸 전투. 규칙은 "E. 카드 위주"다. 선봉은 없고, 상점 레벨에 따라 시작 카드를 1~3장 고른다.';
   const many = mode.players > 2;
   $('mOpCommanderRow').hidden = many;
   $('mOpNote').textContent = many
@@ -1023,7 +1036,7 @@ function startMatch() {
     styles.push(style === 'random' ? rng.pick(Object.keys(E.SHOP_STYLES)) : style);
   }
   match = {
-    game: E.createGame({ seed, mode, players }),
+    game: E.createGame({ seed, mode, players, battle: $('mBattle').value }),
     botLevel: $('mBotLevel').value,
     styles,
     shopSeconds: Number($('mShopTime').value),
@@ -1072,6 +1085,7 @@ function draftChoose(i) {
 
 function endMatch() {
   if (match && match.timerId) clearInterval(match.timerId);
+  fieldView.stop();
   match = null;
 }
 
@@ -1141,15 +1155,19 @@ function shopAct(fn) {
 
 function cardFace(game, id, { cost, costClass = 'gold', attrs = '', cls = [], note = '', prefix = '' }) {
   const def = E.CARDS[id];
-  const r = game.battleRules;
+  const r = E.fullBattleRules(game);
+  const field = game.battle === 'field';
+  const fs = field ? E.Field.FIELD_STATS[id] : null;
+  const reach = fs ? (def.ranged ? `사거리 ${fs.range}` : '근접') + ` · 속도 ${fs.speed}` : def.ranged ? '원거리' : '근접';
   const stat = def.type === 'unit'
-    ? `${fmt(def.atk * (r.unitAtkMult ?? 1))}/${fmt(def.hp * (r.unitHpMult ?? 1))}/${def.interval / 1000}초 · ${def.ranged ? '원거리' : '근접'}`
+    ? `${fmt(def.atk * r.unitAtkMult)}/${fmt(def.hp * r.unitHpMult)}/${def.interval / 1000}초 · ${reach}`
     : '';
+  const text = field ? E.Field.fieldText(id) : def.text || '';
   return `<div class="${['card', def.type, ...cls].join(' ')}"${attrs} role="button" tabindex="0">
     <span class="cost ${costClass}">${cost}</span>
     <span class="cname">${esc(def.name)}</span>
     <span class="ctype">${prefix}${TYPE_NAMES[def.type]} · ${def.tier}등급 · 마나 ${def.cost}${stat ? ` · ${stat}` : ''}</span>
-    <span class="ctext">${esc(def.text || '')}</span>
+    <span class="ctext">${esc(text)}</span>
     <span class="own">${note}</span>
   </div>`;
 }
@@ -1176,14 +1194,14 @@ function memberInfo(game, m) {
   return { src, ghost, deck, name: ghost ? `${src.name}의 유령` : src.name };
 }
 
-function damageRule(info) {
+function damageRule(info, game) {
   const b = info.baseDamage;
   switch (info.format) {
     case 'practice': return 'HP 피해 없음, 이기면 골드 +2';
     case 'boss': return 'HP 피해 없음. 보스에게 준 피해 순위로 보상을 받는다';
     case 'duel': return `지면 HP −(${b} + 상대에게 남은 유닛 수)`;
     case 'melee3': return `기준 피해 ${b} + 남은 상대 유닛 수. 2위는 50%, 3위는 100%를 받는다`;
-    case 'melee4': return `기준 피해 ${b} + 남은 상대 유닛 수. 2위 30%, 3위 70%, 4위 100%`;
+    case 'melee4': return `${game && game.battle === 'field' ? '가운데 원 점령과 처치 점수로 순위를 정한다. ' : ''}기준 피해 ${b} + 남은 상대 유닛 수. 2위 30%, 3위 70%, 4위 100%`;
     case 'alliance': return `지면 둘 다 (${b} + 이긴 팀에 남은 유닛 수)의 절반을 받는다`;
     default: return '';
   }
@@ -1194,7 +1212,8 @@ function renderOpponents(game, info) {
   const spy = E.COMMANDERS[P.commander].seesOpening;
   if (info.format === 'practice') return '<div><b>중립 몬스터</b></div><div><small>싼 유닛 8장을 느리게 낸다.</small></div>';
   if (info.format === 'boss') {
-    return '<div><b>고대 골렘</b></div><div><small>쓰러지지 않는다. 10초마다 전조 1.5초 뒤 전열 전체를 친다. 40초 동안 준 피해로 순위를 매긴다. 지휘관은 피해를 받지 않는다.</small></div>';
+    const hit = game.battle === 'field' ? '움직이지 않고, 10초마다 전조 1.5초 뒤 자기 주변 넓은 범위를 친다' : '10초마다 전조 1.5초 뒤 전열 전체를 친다';
+    return `<div><b>고대 골렘</b></div><div><small>쓰러지지 않는다. ${hit}. 40초 동안 준 피해로 순위를 매긴다. 지휘관은 피해를 받지 않는다.</small></div>`;
   }
   const group = E.groupOf(game, ME) || [];
   const myAt = group.findIndex((m) => m.p === ME);
@@ -1243,8 +1262,9 @@ function renderShop() {
   const many = game.players.length > 2;
 
   $('sRound').innerHTML = `${game.round}<small>라운드</small>`;
-  const field = info.battlefield ? `전장: ${E.BATTLEFIELDS[info.battlefield].name} — ${E.BATTLEFIELDS[info.battlefield].text}` : '전장: 없음';
-  $('sInfo').textContent = `다음 전투: ${FORMAT_NAMES[info.format]} · ${field} · ${damageRule(info)}`;
+  const bfText = (id) => (game.battle === 'field' ? FIELD_EFFECTS[id] : E.BATTLEFIELDS[id].text);
+  const field = info.battlefield ? `전장: ${E.BATTLEFIELDS[info.battlefield].name} — ${bfText(info.battlefield)}` : '전장: 없음';
+  $('sInfo').textContent = `다음 전투: ${FORMAT_NAMES[info.format]} · ${field} · ${damageRule(info, game)}`;
 
   // 내 상태
   const inc = E.incomePreview(game, ME);
@@ -1359,8 +1379,8 @@ function goBattle() {
   const mine = battles.find((b) => b.sides.includes(ME));
   seatMeFirst(mine);
   // 내가 끼지 않는 전투는 바로 계산한다
-  for (const b of battles) if (b !== mine) b.state = E.runBattle(b.cfg).state;
-  launchBattle({
+  for (const b of battles) if (b !== mine) b.state = E.runRoundBattle(b).state;
+  const opts = {
     cfg: mine.cfg,
     // 연습 라운드의 중립 몬스터는 엔진이 정한 느린 봇을 쓴다
     botOpts: (seat) => ({ seed: E.hashSeed(game.seed, 'bot', game.round, seat), ...(mine.cfg.players[seat].bot || E.BOT_LEVELS[match.botLevel]) }),
@@ -1370,7 +1390,12 @@ function goBattle() {
       const summary = E.finishRound(game, battles);
       showRoundResult(summary, state, battles.indexOf(mine), before);
     },
-  });
+  };
+  if (mine.engine === 'cells') launchBattle(opts);
+  else {
+    showScreen('fieldBattle');
+    fieldView.start(opts);
+  }
 }
 
 function resultText(r) {
@@ -1401,7 +1426,7 @@ function showRoundResult(summary, state, myGroup, before) {
     title.className = good ? 'win' : mine.won === false ? 'lose' : '';
     title.textContent = `${summary.round}라운드 ${FORMAT_SHORT[summary.format]} · ${resultText(mine)}`;
   }
-  const why = state.result.reason === 'commander' ? '지휘관이 쓰러졌다' : '시간이 다 됐다';
+  const why = state.mode === 'field' ? endReason(state) : state.result.reason === 'commander' ? '지휘관이 쓰러졌다' : '시간이 다 됐다';
   const outs = summary.eliminated.length ? ` · 이번 라운드 탈락: ${summary.eliminated.map((p) => game.players[p].name).join(', ')}` : '';
   $('rrDetail').textContent = `${FORMAT_NAMES[summary.format]} · ${(state.result.timeMs / 1000).toFixed(1)}초 · ${why}${outs}`;
 
@@ -1429,6 +1454,7 @@ function showRoundResult(summary, state, myGroup, before) {
     const b = ev.target.closest('button');
     if (!b) return;
     stopBattle();
+    fieldView.stop();
     if (b.dataset.act === 'lobby') {
       endMatch();
       showScreen('lobby');
@@ -1443,7 +1469,7 @@ function watchRest() {
   const { game } = match;
   while (game.phase !== 'over' && game.round < 200) {
     runBotShops();
-    E.finishRound(game, E.roundBattles(game).map((b) => ({ ...b, state: E.runBattle(b.cfg).state })));
+    E.finishRound(game, E.roundBattles(game).map((b) => ({ ...b, state: E.runRoundBattle(b).state })));
   }
   const P = game.players[ME];
   $('rrTitle').className = 'lose';
@@ -1457,7 +1483,14 @@ function watchRest() {
 }
 
 window.__match = () => match;
-window.__render = () => { if (game) { consumeEvents(); render(); } };
+window.__render = () => {
+  if (!$('fieldBattle').hidden) fieldView.refresh();
+  else if (game) {
+    consumeEvents();
+    render();
+  }
+};
+window.__fieldView = fieldView;
 
 // ═════════════════════════════════════════════════════════════
 // 키보드 단축키
@@ -1653,6 +1686,7 @@ function onKey(ev) {
       handled = true;
     }
   } else if (!$('battle').hidden && game) handled = battleKey(ev);
+  else if (!$('fieldBattle').hidden) handled = fieldView.onKey(ev);
   else if (!$('shop').hidden && match) handled = shopKey(ev);
   else if (!$('draft').hidden && match) {
     const d = digitOf(ev);

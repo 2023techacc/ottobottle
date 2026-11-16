@@ -631,3 +631,49 @@ test('전투 길이: 결투는 기본 수치로 중앙값이 24~36초', () => {
   const med = lens.sort((x, y) => x - y)[100];
   assert.ok(med >= 24 && med <= 36, `중앙값 ${med}초`);
 });
+
+// ───────────────────────── 보스 레이드 ─────────────────────────
+
+const bossCfg = (seed, deck, commander = 'general') => ({
+  seed,
+  format: 'boss',
+  logEvents: true,
+  players: [{ commander, deck }, { commander: 'merchant', name: '고대 골렘', deck: [], opening: [], boss: true }],
+});
+
+test('보스 레이드: 보스는 제자리에 서 있고, 지휘관은 피해를 받지 않으며, 40초를 채운다', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const rng = E.makeRng(seed);
+    const commander = rng.pick(E.COMMANDER_IDS);
+    const { state, result } = E.runFieldBattle(bossCfg(seed, E.randomMidDeck(commander, rng), commander));
+    assert.equal(result.timeMs, state.rules.battleMs);
+    assert.equal(state.players[0].hp, state.rules.commanderHp, '지휘관은 피해를 받지 않는다');
+    const boss = state.units.find((u) => u.defId === 'boss');
+    assert.ok(boss, '보스는 쓰러지지 않는다');
+    assert.deepEqual([boss.x, boss.y], [0, state.rules.bossY], '보스는 움직이지 않는다');
+    assert.ok(result.bossDamage[0] > 0);
+    assert.equal(Math.round(result.bossDamage[0] * 1e6), Math.round(boss.damageTaken * 1e6));
+    assert.equal(state.players[1].stats.cardsPlayed, 0);
+  }
+});
+
+test('보스 레이드: 보스는 10초마다 전조 1.5초 뒤 자기 주변을 친다 (표적이 없어도)', () => {
+  // 내 덱이 비어 있어도 보스는 정해진 때에 친다
+  const { state } = E.runFieldBattle(bossCfg(1, [{ id: 'scout' }]));
+  // 40초 정각에 시작한 전조는 터지기 전에 전투가 끝난다
+  const tele = state.events.filter((e) => e.type === 'telegraph' && e.p === 1 && e.t < state.rules.battleMs);
+  const ults = state.events.filter((e) => e.type === 'ult' && e.p === 1);
+  assert.deepEqual(tele.map((e) => e.t), [10000, 20000, 30000]);
+  assert.deepEqual(ults.map((e) => e.t), [11500, 21500, 31500]);
+  assert.equal(tele[0].radius, state.rules.bossSlamRadius);
+});
+
+test('보스 레이드: 내려치기 범위 안의 유닛만 맞는다', () => {
+  const s = F.createField(bossCfg(1, [{ id: 'scout' }]));
+  const near = F.summonUnit(s, 0, 0, s.rules.bossY - 3, { id: 'colossus' });
+  const far = F.summonUnit(s, 0, 4, -5, { id: 'archer' });
+  const hp = [near.hp, far.hp];
+  run(s, 11500);
+  assert.ok(near.hp < hp[0], '범위 안의 유닛은 맞는다');
+  assert.equal(far.hp, hp[1], '범위 밖의 원거리 유닛은 맞지 않는다 (보스 사거리 밖)');
+});

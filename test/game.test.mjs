@@ -378,10 +378,10 @@ test('전투 설정: 덱, 고른 시작 카드, 레벨에 따른 장수가 넘�
 
 // ───────────────────────── 봇끼리 한 경기 ─────────────────────────
 
-function botGame(seed, styles = ['balanced', 'balanced']) {
+function botGame(seed, styles = ['balanced', 'balanced'], battle = undefined) {
   const rng = E.makeRng(E.hashSeed(seed, 'setup'));
   const players = [0, 1].map(() => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng) }));
-  const game = E.createGame({ seed, players });
+  const game = E.createGame({ seed, players, battle });
   const total = E.poolTotal(game);
   for (const P of game.players) E.runDraftBot(game, P.idx);
   assert.equal(game.phase, 'shop');
@@ -396,7 +396,7 @@ function botGame(seed, styles = ['balanced', 'balanced']) {
     }
     for (const id of E.POOL_CARD_IDS) assert.ok(game.pool[id] >= 0, `${id} 풀이 음수`);
     assert.equal(E.poolTotal(game), total, '풀과 덱의 카드 수 합은 변하지 않는다');
-    const battles = E.roundBattles(game).map((b) => ({ ...b, state: E.runBattle(b.cfg).state }));
+    const battles = E.roundBattles(game).map((b) => ({ ...b, state: E.runRoundBattle(b).state }));
     E.finishRound(game, battles);
   }
   return game;
@@ -418,4 +418,41 @@ test('같은 시드면 경기 전체가 똑같이 진행된다', () => {
   assert.deepEqual(a.history, b.history);
   assert.deepEqual(a.players.map((P) => P.deck.map((c) => [c.id, c.stars, c.fuse])), b.players.map((P) => P.deck.map((c) => [c.id, c.stars, c.fuse])));
   assert.notDeepEqual(botGame(8).history, a.history);
+});
+
+// ───────────────────────── 전투 방식 ─────────────────────────
+
+test('전투 방식: 기본은 유닛 전투, 예전 칸 전투도 고를 수 있다', () => {
+  const g = mk();
+  assert.equal(g.battle, 'field');
+  assert.ok(E.roundBattles(g).every((b) => b.engine === 'field'));
+  // 유닛 전투의 규칙은 FIELD_RULES가 기본이다 (칸 전투의 "E. 카드 위주" 수치를 덮어쓰지 않는다)
+  assert.equal(E.fullBattleRules(g).commanderHp, E.Field.FIELD_RULES.commanderHp);
+  assert.equal(E.fullBattleRules(g).openingPicks, 0, '시작 카드 장수는 상점 레벨이 정한다');
+  const c = E.createGame({ seed: 3, battle: 'cells', startDecks: 'commander', players: g.players.map((P) => ({ commander: P.commander, picks: P.picks })) });
+  assert.equal(c.battle, 'cells');
+  assert.equal(E.fullBattleRules(c).commanderHp, E.PRESETS.cards.rules.commanderHp);
+  assert.ok(E.roundBattles(c).every((b) => b.engine === 'cells'));
+  assert.throws(() => E.createGame({ seed: 1, battle: 'nope', players: g.players.map((P) => ({ commander: P.commander, picks: P.picks })) }));
+});
+
+test('유닛 전투 경기: 시작 카드와 레벨 보너스가 전투에 그대로 넘어간다', () => {
+  const g = mk();
+  const P = g.players[0];
+  E.setOpening(g, 0, [P.deck[2].key]);
+  const [b] = E.roundBattles(g);
+  const { state } = E.runRoundBattle(b);
+  assert.equal(state.mode, 'field');
+  assert.equal(b.cfg.players[0].bonus.openingPicks, E.openingCount(g, 0));
+  // 고른 시작 카드는 첫 손패에 들어 있다 (냈거나 손에 있거나)
+  const id = P.deck[2].id;
+  assert.ok(state.players[0].stats.plays[id] > 0 || state.players[0].hand.some((c) => c.id === id) || state.units.some((u) => u.owner === 0 && u.defId === id));
+});
+
+test('예전 칸 전투로도 봇끼리 한 경기가 끝까지 진행된다', () => {
+  for (let seed = 1; seed <= 6; seed++) {
+    const g = botGame(seed, ['balanced', 'balanced'], 'cells');
+    assert.equal(g.phase, 'over');
+    assert.ok(Math.min(...g.players.map((P) => P.hp)) <= 0);
+  }
 });
