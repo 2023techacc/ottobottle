@@ -57,7 +57,7 @@ test('난투장 필드는 원이고 본진 넷이 둘레에 같은 간격으로 
   // 배치 칸끼리 겹치지 않는다
   const all = s4.players.flatMap((P) => F.deployCells(s4, P.idx));
   for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) assert.ok(d(all[i], all[j]) > 1.2, `${i},${j}`);
-  assert.deepEqual([s4.capture.x, s4.capture.y, s4.capture.radius, s4.capture.goal], [0, 0, 3, 15]);
+  assert.deepEqual([s4.capture.x, s4.capture.y, s4.capture.radius, s4.capture.goal], [0, 0, 3, 20]);
   const sa = mk({ format: 'alliance' });
   assert.deepEqual(sa.players.map((P) => P.team), [0, 0, 1, 1]);
   assert.deepEqual(sa.players.map((P) => P.base.y), [-6, -6, 6, 6]);
@@ -407,17 +407,17 @@ test('난투장 점수: 원 안에 유닛이 가장 많은 한 사람만 1초에
   assert.equal(s.capture.holder, -1, '다시 1 대 1');
 });
 
-test('난투장: 15점에 먼저 닿으면 바로 끝난다. 아니면 40초에 점수순으로 순위를 매기고, 같으면 공동 순위', () => {
+test('난투장: 20점에 먼저 닿으면 바로 끝난다. 아니면 40초에 점수순으로 순위를 매기고, 같으면 공동 순위', () => {
   const s = mk({ format: 'melee4' });
   Object.assign(dummy(s, 2, 0, 0, 'shield'), { range: 0 });
-  run(s, 14900);
+  run(s, 19900);
   assert.equal(s.over, false);
   run(s, 100);
   assert.equal(s.over, true);
   assert.equal(s.result.reason, 'capture');
   assert.equal(s.result.winner, 2);
   assert.deepEqual(s.result.ranks, [1, 1, 0, 1]);
-  assert.deepEqual(s.result.scores, [0, 0, 15, 0]);
+  assert.deepEqual(s.result.scores, [0, 0, 20, 0]);
 
   const t = mk({ format: 'melee4' });
   t.players[1].capMs = 7000;
@@ -429,6 +429,49 @@ test('난투장: 15점에 먼저 닿으면 바로 끝난다. 아니면 40초에 
   assert.equal(t.result.timeMs, 40000);
   assert.deepEqual(t.result.ranks, [2, 0, 2, 1]);
   assert.deepEqual(t.result.order.slice(0, 2), [1, 3]);
+});
+
+test('난투장 처치 점수: 적 유닛을 쓰러뜨리면 1점, 원 안에서면 2점, 작은 복제는 절반. 결투에는 없다', () => {
+  const s = mk({ format: 'melee4' });
+  s.rules.captureAggro = 0;
+  const kill = (victimOwner, x, y, id = 'shield', extra = {}) => {
+    const v = Object.assign(dummy(s, victimOwner, x, y, id), { range: 0, hp: 0.01 }, extra);
+    F.applyActions(s, [{ type: 'play', uid: give(s, 0, 'firebolt').uid, target: { unitId: v.id } }, null, null, null]);
+    assert.equal(F.findUnit(s, v.id), null);
+  };
+  kill(1, -7, 0); // 원 밖
+  near(s.players[0].capMs, 1000);
+  kill(2, 0, 2); // 원 안 (반지름 3)
+  near(s.players[0].capMs, 3000);
+  kill(3, 7, 0, 'rats', { token: true }); // 원 밖의 작은 복제
+  near(s.players[0].capMs, 3500);
+  near(s.players[0].stats.killScore, 3.5);
+  near(s.players[0].stats.kills, 3);
+  assert.deepEqual(s.players.slice(1).map((P) => P.capMs), [0, 0, 0], '쓰러진 쪽은 점수를 잃지 않는다');
+
+  // 결투에는 처치 점수가 없다
+  const d = mk();
+  const v = Object.assign(dummy(d, 1, 0, 3, 'shield'), { hp: 0.01 });
+  play(d, 0, give(d, 0, 'firebolt'), { unitId: v.id });
+  assert.equal(d.players[0].capMs, 0);
+});
+
+test('난투장 처치 점수: 같은 순간에 함께 쓰러뜨리면 나눠 갖는다. 쓰러진 순간에 친 적만 받는다', () => {
+  const s = mk({ format: 'melee4' });
+  s.rules.captureAggro = 0;
+  const v = Object.assign(dummy(s, 1, -7, 0, 'shield'), { range: 0, hp: 0.01 });
+  const fire = (p) => ({ type: 'play', uid: give(s, p, 'firebolt').uid, target: { unitId: v.id } });
+  F.applyActions(s, [fire(0), null, fire(2), null]);
+  near(s.players[0].capMs, 500);
+  near(s.players[2].capMs, 500);
+  // 먼저 깎아 둔 쪽은 받지 못한다 (쓰러진 순간에 친 사람만)
+  const w = Object.assign(dummy(s, 1, -7, 2, 'colossus'), { range: 0 });
+  F.applyActions(s, [{ type: 'play', uid: give(s, 0, 'firebolt').uid, target: { unitId: w.id } }, null, null, null]);
+  run(s, 100);
+  w.hp = 0.01;
+  F.applyActions(s, [null, null, null, { type: 'play', uid: give(s, 3, 'firebolt').uid, target: { unitId: w.id } }]);
+  near(s.players[0].capMs, 500);
+  near(s.players[3].capMs, 1000);
 });
 
 

@@ -6,7 +6,8 @@
 //   - 유닛은 몸집이 있어서 서로 겹치지 않고 밀어낸다. 여럿이 모이면 뒤엉킨다.
 //   - 결투, 난투장, 연합전 모두 한 필드에서 싸운다.
 //   - 결투와 연합전은 상대 지휘관(본진)을 쓰러뜨리면 이긴다.
-//     난투장은 본진을 치지 않는다. 한가운데의 원을 차지하고 있는 동안 점수가 오르고, 점수로 순위를 정한다.
+//     난투장은 본진을 치지 않는다. 한가운데의 원을 차지하고 있는 동안, 그리고 적 유닛을 쓰러뜨릴 때 점수가 오르고,
+//     점수로 순위를 정한다.
 //
 // 난수는 덱 섞기에만 쓴다. 같은 설정과 같은 입력이면 결과도 같다.
 // 좌표: 필드 한가운데가 (0, 0), 위쪽이 +y. 길이 단위는 "배치 칸 한 변 = 2".
@@ -54,9 +55,15 @@ export const FIELD_RULES = Object.freeze({
   meleeRadius: 10, // 난투장 필드의 반지름
   // 난투장(중앙 점령)
   captureRadius: 3, // 한가운데 점령 원의 반지름
-  captureGoal: 15, // 이 점수에 먼저 닿으면 바로 끝난다. 원 안에 유닛이 가장 많은 사람만 1초에 1점
+  captureGoal: 20, // 이 점수에 먼저 닿으면 바로 끝난다. 원 안에 유닛이 가장 많은 사람만 1초에 1점 (처치 점수는 아래)
   captureHold: 0.7, // 싸울 상대가 없으면 원 반지름의 이 비율 안쪽까지 걸어 들어가서 버틴다
   captureAggro: 4.5, // 이 거리 안에 들어온 적만 상대한다 (멀리 있는 적을 쫓아 원을 비우지 않는다)
+  // 처치 점수: 적 유닛을 쓰러뜨리면 한 기에 killScore 점 (작은 복제는 절반). 원 안에서 쓰러졌으면 × killZoneMult.
+  // 같은 순간에 여럿이 함께 쓰러뜨렸으면 나눠 갖는다. 0이면 처치 점수가 없다.
+  // killPerMana가 0보다 크면 한 기에 일정한 점수 대신 "마나 비용 × killPerMana" 점을 준다 (비교 실험용. 싼 유닛이 더 유리해진다).
+  killScore: 1,
+  killPerMana: 0,
+  killZoneMult: 2,
 });
 
 /** 전열·후열이 없어져서 뜻이 달라진 카드의 설명 */
@@ -206,7 +213,7 @@ export function createField(cfg) {
       base: { x: s.bx, y: s.by },
       hp: rules.commanderHp,
       maxHp: rules.commanderHp,
-      capMs: 0, // 난투장: 원을 차지하고 있던 시간. 1000이 1점
+      capMs: 0, // 난투장 점수 (1000이 1점) = 원을 차지한 시간 + 처치 점수
       mana: rules.startMana + (bonus.startMana || 0),
       maxMana: rules.startMaxMana + (bonus.maxMana || 0),
       maxManaBonus: bonus.maxMana || 0,
@@ -226,6 +233,7 @@ export function createField(cfg) {
       stats: {
         cardsPlayed: 0, plays: {}, manaSpent: 0, manaWasted: 0, manaCapMs: 0, handFullMs: 0,
         handSizeSum: 0, ticks: 0, redraws: 0, unitDamage: 0, commanderDamage: 0, unitsLost: 0, drawn: 0, walked: 0,
+        kills: 0, zoneScore: 0, killScore: 0, // 난투장 점수의 내역 (점)
       },
     };
     P.deck = pc.deck.map((c, i) => ({
@@ -431,6 +439,7 @@ export function summonUnit(state, owner, x, y, c) {
     telegraphing: false,
     dying: false,
     pendingHeal: 0,
+    hitters: null,
     summonedAt: state.timeMs,
   };
   state.units.push(u);
@@ -467,6 +476,7 @@ function summonToken(state, parent, x, y) {
     telegraphing: false,
     dying: false,
     pendingHeal: 0,
+    hitters: null,
     summonedAt: state.timeMs,
   };
   state.units.push(u);
@@ -503,6 +513,11 @@ function dealDamage(state, target, amount, opts = {}) {
   target.hp -= amount;
   dealt += amount;
   if (opts.source && opts.source.owner !== target.owner) state.players[opts.source.owner].stats.unitDamage += amount;
+  if (opts.source && isEnemy(state, opts.source.owner, target.owner)) {
+    // 처치 점수용: 이 시각에 이 유닛을 친 플레이어들 (처리 순서와 상관없이 같은 시각이면 모두 함께 쓰러뜨린 것으로 친다)
+    if (!target.hitters || target.hitters.t !== state.timeMs) target.hitters = { t: state.timeMs, owners: [] };
+    if (!target.hitters.owners.includes(opts.source.owner)) target.hitters.owners.push(opts.source.owner);
+  }
   if (target.ult && !target.telegraphing && state.timeMs >= target.silenceUntil) gainGauge(state, target, target.ult.gaugeHit);
   emit(state, { type: 'damage', p: target.owner, unitId: target.id, x: target.x, y: target.y, amount, guarded: !!opts.guarded, aoe: !!opts.aoe });
   // 같은 순간에 일어나는 공격들 사이에서는 죽음을 바로 확정하지 않는다 (먼저 처리된 쪽이 유리해지지 않게).
@@ -683,7 +698,10 @@ function scoreCapture(state) {
   if (holder !== cap.holder) emit(state, { type: 'capture', p: holder, from: cap.holder });
   cap.counts = counts;
   cap.holder = holder;
-  if (holder >= 0) state.players[holder].capMs += state.rules.tickMs;
+  if (holder >= 0) {
+    state.players[holder].capMs += state.rules.tickMs;
+    state.players[holder].stats.zoneScore += state.rules.tickMs / 1000;
+  }
 }
 
 function attackAll(state, ready, dt) {
@@ -817,7 +835,36 @@ function removeUnit(state, u, died) {
   if (died) {
     P.stats.unitsLost++;
     emit(state, { type: 'death', p: u.owner, unitId: u.id, name: u.name, x: u.x, y: u.y });
+    scoreKill(state, u);
   }
+}
+
+/** 이 유닛이 쓰러졌을 때 얻는 처치 점수 (난투장이 아니면 0) */
+export function killValue(state, u) {
+  const cap = state.capture;
+  const r = state.rules;
+  let v = r.killPerMana > 0 ? CARDS[u.defId].cost * u.stars * r.killPerMana : r.killScore;
+  if (!cap || !(v > 0)) return 0;
+  if (u.token) v /= 2;
+  if (q6(Math.hypot(u.x - cap.x, u.y - cap.y)) <= q6(cap.radius)) v *= state.rules.killZoneMult;
+  return v;
+}
+
+/** 난투장: 쓰러진 유닛의 처치 점수를 그 순간에 친 적들에게 나눠 준다 */
+function scoreKill(state, u) {
+  const h = u.hitters;
+  if (!state.capture || !h || h.t !== state.timeMs || !h.owners.length) return;
+  const v = killValue(state, u);
+  if (v <= 0) return;
+  const ms = Math.round((v * 1000) / h.owners.length);
+  for (const q of h.owners) {
+    const Q = state.players[q];
+    if (Q.dead) continue;
+    Q.capMs += ms;
+    Q.stats.kills += 1 / h.owners.length;
+    Q.stats.killScore += ms / 1000;
+  }
+  emit(state, { type: 'killScore', p: u.owner, unitId: u.id, by: [...h.owners], points: ms / 1000, x: u.x, y: u.y });
 }
 
 function triggerUlt(state, u) {

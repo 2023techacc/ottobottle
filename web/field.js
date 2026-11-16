@@ -93,7 +93,7 @@ function initSetup() {
   });
   $('start').addEventListener('click', () => startBattle());
   const r = F.FIELD_RULES;
-  $('rulesNote').textContent = `지휘관 체력 ${r.commanderHp} · 유닛 공격 ×${r.unitAtkMult} · 유닛 체력 ×${r.unitHpMult} · 유닛은 ${r.unitCap}기까지 · 난투장은 본진을 치지 않고, 가운데 원 안에 유닛이 가장 많은 사람이 1초에 1점씩 얻어 ${r.captureGoal}점에 먼저 닿으면 이긴다`;
+  $('rulesNote').textContent = `지휘관 체력 ${r.commanderHp} · 유닛 공격 ×${r.unitAtkMult} · 유닛 체력 ×${r.unitHpMult} · 유닛은 ${r.unitCap}기까지 · 난투장은 본진을 치지 않는다. 가운데 원 안에 유닛이 가장 많은 사람이 1초에 1점, 적 유닛을 쓰러뜨리면 ${r.killScore}점(원 안이면 ${r.killScore * r.killZoneMult}점)을 얻어 ${r.captureGoal}점에 먼저 닿으면 이긴다`;
   $('statTable').innerHTML = `<div class="decklist">${Object.entries(F.FIELD_STATS).map(([id, s]) => {
     const def = E.CARDS[id];
     return `<span class="chip unit" title="${esc(F.fieldText(id))}"><b>${def.cost}</b>${esc(def.name)} · ${def.ranged ? '원거리' : '근접'} · 사거리 ${s.range} · 속도 ${s.speed}</span>`;
@@ -545,6 +545,10 @@ function consumeEvents() {
         if (e.p >= 0) logLine(e.t, e.p, `${who(e.p)} 원을 차지했다`, 'warn');
         else logLine(e.t, e.from, `${who(e.from)} 원을 놓쳤다`);
         break;
+      case 'killScore':
+        // 난투장 처치 점수: 쓰러진 자리에 금색으로 띄운다 (원 안이면 2배)
+        floatAt(e.x, e.y + 0.6, `+${fmt(e.points)}점`, `score${e.by.includes(ME) ? ' mine' : ''}`);
+        break;
       case 'teleport': game.jumped.add(e.unitId); break;
       case 'damage': {
         const d = dmg.get(e.unitId) || { x: e.x, y: e.y, amount: 0 };
@@ -776,8 +780,9 @@ function showResult() {
   $('resultDetail').textContent = `${FORMATS[state.format].name} · ${(res.timeMs / 1000).toFixed(1)}초 · ${why} · 시드 ${state.seed}`;
   const order = [...state.players].sort((A, B) => res.ranks[A.idx] - res.ranks[B.idx] || A.idx - B.idx);
   const cap = !!state.capture;
-  $('resultStats').innerHTML = `<tr><th></th><th>순위</th><th>${cap ? '점령 점수' : '지휘관 체력'}</th><th>낸 카드</th><th>유닛에 준 피해</th>${cap ? '' : '<th>지휘관에 준 피해</th>'}<th>걸은 거리</th></tr>${order.map((P) => `
-    <tr class="${P.idx === ME ? 'mine' : ''}"><td>${esc(P.name)}</td><td>${res.ranks[P.idx] + 1}</td><td>${cap ? fmt(res.scores[P.idx]) : fmt(Math.max(0, P.hp))}</td>
+  $('resultStats').innerHTML = `<tr><th></th><th>순위</th><th>${cap ? '점수 <small>(원 + 처치)</small>' : '지휘관 체력'}</th>${cap ? '<th>쓰러뜨린 유닛</th>' : ''}<th>낸 카드</th><th>유닛에 준 피해</th>${cap ? '' : '<th>지휘관에 준 피해</th>'}<th>걸은 거리</th></tr>${order.map((P) => `
+    <tr class="${P.idx === ME ? 'mine' : ''}"><td>${esc(P.name)}</td><td>${res.ranks[P.idx] + 1}</td>
+    <td>${cap ? `${fmt(res.scores[P.idx])} <small>(${fmt(P.stats.zoneScore)} + ${fmt(P.stats.killScore)})</small>` : fmt(Math.max(0, P.hp))}</td>${cap ? `<td>${fmt(P.stats.kills)}</td>` : ''}
     <td>${P.stats.cardsPlayed}</td><td>${fmt(P.stats.unitDamage)}</td>${cap ? '' : `<td>${fmt(P.stats.commanderDamage)}</td>`}<td>${fmt(P.stats.walked)}</td></tr>`).join('')}`;
   $('result').hidden = false;
 }

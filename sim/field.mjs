@@ -37,11 +37,14 @@ function teamScore(state, p) {
   return r.winnerTeam === state.players[p].team ? 1 : 0;
 }
 
+const MELEE_BUCKETS = [{ name: '0~1장', max: 1 }, { name: '2~3장', max: 3 }, { name: '4~5장', max: 5 }, { name: '6장 이상', max: Infinity }];
+
 function runFormat(format) {
   const n = SEATS[format];
   const pace = new PaceStats();
   const cards = new Tally();
   const cmds = new Tally();
+  const comp = new Tally(); // 덱에 든 근접 유닛 카드 장수별
   const seats = new Array(n).fill(0);
   let walked = 0;
   let peakUnits = 0;
@@ -80,6 +83,8 @@ function runFormat(format) {
       seats[p] += s;
       walked += state.players[p].stats.walked;
       cmds.add(cs[p], { n: 1, pts: s });
+      const melee = decks[p].filter((c) => E.CARDS[c.id].type === 'unit' && !E.CARDS[c.id].ranged).length;
+      comp.add(MELEE_BUCKETS.find((b) => melee <= b.max).name, { n: 1, pts: s });
       for (const id of new Set(decks[p].map((c) => c.id))) cards.add(id, { n: 1, pts: s });
       for (const [id, k] of Object.entries(state.players[p].stats.plays)) cards.add(id, { plays: k });
     }
@@ -119,10 +124,46 @@ function runFormat(format) {
   const cmdRows = cmds.entries().map(([id, r]) => ({ 형식: NAMES[format], 지휘관: E.COMMANDERS[id].name, 판수: r.n, 승률: pct(r.pts / r.n), 오차: ci95(r.pts / r.n, r.n) })).sort((a, b) => b.승률 - a.승률);
   console.log('지휘관별');
   console.table(cmdRows.map(({ 형식, ...row }) => row));
-  return { overall, seatRows, cardRows, cmdRows };
+  const compRows = MELEE_BUCKETS.map((b) => ({ r: comp.rows.get(b.name), name: b.name })).filter((x) => x.r)
+    .map(({ r, name }) => ({ 형식: NAMES[format], 근접_유닛: name, 판수: r.n, 승률: pct(r.pts / r.n), 오차: ci95(r.pts / r.n, r.n) }));
+  return { format, fair, overall, seatRows, cardRows, cmdRows, compRows };
 }
 
 const all = FORMATS.map(runFormat);
+
+// 형식끼리 견주기: 기대 승률이 달라서(결투 50%, 난투장 25%) "기대 대비 지수"로 맞춘다. 100이 보통, 120이면 기대보다 20% 더 이긴다.
+if (all.length > 1) {
+  const index = (row, fair) => Math.round((row.승률 / (fair * 100)) * 100);
+  const compare = (rowsOf, nameKey) => {
+    const names = [...new Set(all.flatMap((a) => rowsOf(a).map((r) => r[nameKey])))];
+    return names.map((name) => {
+      const out = { [nameKey]: name };
+      const vals = [];
+      for (const a of all) {
+        const r = rowsOf(a).find((x) => x[nameKey] === name);
+        const short = NAMES[a.format].split(' ')[0];
+        out[short] = r ? index(r, a.fair) : '';
+        out[`${short}_오차`] = r ? Math.round(r.오차 / (a.fair * 100) * 100) : '';
+        if (r) vals.push(out[short]);
+      }
+      out.최대_차이 = vals.length ? Math.max(...vals) - Math.min(...vals) : '';
+      return out;
+    });
+  };
+  const byGap = (x, y) => y.최대_차이 - x.최대_차이;
+  const cardCmp = compare((a) => a.cardRows, '카드').sort(byGap).map((r) => ({ ...r, 종류: (() => { const d = Object.values(E.CARDS).find((c) => c.name === r.카드); return d ? (d.type === 'unit' ? (d.ranged ? '원거리' : '근접') : '주문 등') : ''; })() }));
+  console.log('\n━━ 형식별 카드 지수 (승률 ÷ 기대 승률 × 100, 덱에 있을 때) ━━');
+  console.table(cardCmp);
+  const cmdCmp = compare((a) => a.cmdRows, '지휘관').sort(byGap);
+  console.log('━━ 형식별 지휘관 지수 ━━');
+  console.table(cmdCmp);
+  writeCsv(path.join(OUT, 'field_compare_cards.csv'), cardCmp);
+  const compCmp = compare((a) => a.compRows, '근접_유닛');
+  console.log('━━ 덱에 든 근접 유닛 카드 장수별 지수 ━━');
+  console.table(compCmp);
+  writeCsv(path.join(OUT, 'field_compare_commanders.csv'), cmdCmp);
+  writeCsv(path.join(OUT, 'field_compare_melee.csv'), compCmp);
+}
 const tag = FORMATS.length === 1 ? `_${FORMATS[0]}` : '';
 writeCsv(path.join(OUT, `field${tag}_overall.csv`), all.map((a) => a.overall));
 writeCsv(path.join(OUT, `field${tag}_seats.csv`), all.flatMap((a) => a.seatRows));

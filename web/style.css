@@ -358,6 +358,8 @@ a.tablink:hover { border-color: #55627c; }
 .ftele { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid var(--danger); background: #ff4d4d22; animation: pulse .5s infinite alternate; pointer-events: none; display: grid; place-items: center; color: var(--danger); font-weight: 700; font-size: 12px; }
 .ffloat { position: absolute; font-weight: 800; font-size: 14px; color: #ff8080; text-shadow: 0 1px 3px #000; animation: floatup .7s forwards; pointer-events: none; z-index: 5; }
 .ffloat.heal { color: var(--good); }
+.ffloat.score { color: #c9a227; font-size: 12px; }
+.ffloat.score.mine { color: #f2c94c; font-size: 15px; }
 .shot { stroke-width: 2; opacity: .9; animation: fade .25s forwards; }
 @keyframes fade { to { opacity: 0; } }
 
