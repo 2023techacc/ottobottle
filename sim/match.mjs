@@ -4,7 +4,6 @@
 //   node sim/match.mjs                      1:1 경기 300판
 //   node sim/match.mjs --mode rank8         8인 경기 60판
 //   node sim/match.mjs --games 1000
-//   node sim/match.mjs --battle cells       예전 칸 전투로 (기본은 유닛 전투)
 //   node sim/match.mjs --econ "{\"playerHp\":60}"     경제 수치를 바꿔서
 //
 // 결과는 sim/out/match_<모드>_*.csv 에도 저장한다.
@@ -20,8 +19,6 @@ const N = E.MODES[MODE].players;
 const GAMES = Number(args.games || (MODE === 'duel' ? 300 : 60));
 const SEED = Number(args.seed || 1);
 const ECON = args.econ ? JSON.parse(args.econ) : {};
-const BATTLE = args.battle || 'field';
-const SUFFIX = BATTLE === 'field' ? '' : `_${BATTLE}`;
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));
 const STYLES = Object.keys(E.SHOP_STYLES);
 const FORMAT_NAMES = { practice: '연습', duel: '결투', melee4: '난투장', alliance: '연합전', boss: '보스 레이드' };
@@ -32,7 +29,7 @@ function playGame(seed) {
   const econ = { ...E.DEFAULT_ECON, ...E.MODES[MODE].econ, ...ECON };
   const players = Array.from({ length: N }, () => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng, econ) }));
   const styles = players.map(() => rng.pick(STYLES));
-  const game = E.createGame({ seed, players, mode: MODE, econ: ECON, battle: BATTLE });
+  const game = E.createGame({ seed, players, mode: MODE, econ: ECON });
   for (const P of game.players) E.runDraftBot(game, P.idx);
   const perRound = [];
   const formats = [];
@@ -114,9 +111,9 @@ const overall = {
 };
 if (N === 2) overall['0번자리_승률'] = pct((sum.seat0 + sum.draws / 2) / GAMES);
 const goal = MODE === 'duel' ? '10~15분' : '20~25분, 약 15라운드';
-console.log(`\n━━ ${E.MODES[MODE].name} · ${E.BATTLE_KINDS[BATTLE]} 한 경기 흐름 (${GAMES}경기, 목표 ${goal}) ━━`);
+console.log(`\n━━ ${E.MODES[MODE].name} 한 경기 흐름 (${GAMES}경기, 목표 ${goal}) ━━`);
 console.table([overall]);
-writeCsv(path.join(OUT, `match_${MODE}${SUFFIX}_overall.csv`), [overall]);
+writeCsv(path.join(OUT, `match_${MODE}_overall.csv`), [overall]);
 
 console.log('\n━━ 라운드별 평균 (상점을 마친 시점, 살아 있는 플레이어 기준) ━━');
 const roundRows = byRound.entries().filter(([, r]) => r.games >= GAMES * 0.2).map(([k, r]) => ({
@@ -124,14 +121,14 @@ const roundRows = byRound.entries().filter(([, r]) => r.games >= GAMES * 0.2).ma
   레벨: round(r.level / r.n, 1), 골드: round(r.gold / r.n, 1), 덱_장수: round(r.deck / r.n, 1), HP: round(r.hp / r.n, 1),
 }));
 console.table(roundRows);
-writeCsv(path.join(OUT, `match_${MODE}${SUFFIX}_rounds.csv`), roundRows);
+writeCsv(path.join(OUT, `match_${MODE}_rounds.csv`), roundRows);
 
 console.log('\n━━ 형식별 ━━');
 const formatRows = byFormat.entries().map(([id, r]) => ({
   형식: FORMAT_NAMES[id], 횟수: r.n, '전투_길이(초)': round(r.ms / r.n / 1000, 1), 한_명당_HP_피해: round(r.damage / Math.max(1, r.sides), 1),
 }));
 console.table(formatRows);
-writeCsv(path.join(OUT, `match_${MODE}${SUFFIX}_formats.csv`), formatRows);
+writeCsv(path.join(OUT, `match_${MODE}_formats.csv`), formatRows);
 
 console.log('\n━━ 지휘관·상점 성향별 ━━');
 const styleNames = { eco: '저축형', balanced: '균형형', spend: '소비형' };
@@ -141,13 +138,13 @@ const row = (label, r) => ({
 const cmdRows = cmds.entries().map(([id, r]) => row(E.COMMANDERS[id].name, r)).sort((a, b) => a.평균_순위 - b.평균_순위);
 const styleRows = styleTally.entries().map(([id, r]) => row(styleNames[id], r)).sort((a, b) => a.평균_순위 - b.평균_순위);
 console.table([...cmdRows, ...styleRows]);
-writeCsv(path.join(OUT, `match_${MODE}${SUFFIX}_commanders.csv`), [...cmdRows, ...styleRows]);
+writeCsv(path.join(OUT, `match_${MODE}_commanders.csv`), [...cmdRows, ...styleRows]);
 
 console.log('\n━━ 많이 산 카드 ━━');
 const buyRows = cardBuys.entries().map(([id, r]) => ({
   카드: E.CARDS[id].name, 등급: E.CARDS[id].tier, 경기당_구매: round(r.bought / sides, 2), 산_쪽의_승점: pct(r.pts / r.games),
 })).sort((a, b) => b.경기당_구매 - a.경기당_구매);
 console.table(buyRows);
-writeCsv(path.join(OUT, `match_${MODE}${SUFFIX}_cards.csv`), buyRows);
+writeCsv(path.join(OUT, `match_${MODE}_cards.csv`), buyRows);
 
 console.log(`\n${((Date.now() - t0) / 1000).toFixed(1)}초. CSV: ${OUT}`);

@@ -3,16 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>카드 오토배틀러 (가제) — 결투 플레이 테스트</title>
+  <title>카드 오토배틀러 (가제) — 한 경기</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main id="app">
 
     <nav class="modetabs" id="modeTabs">
-      <button type="button" data-mode="lobby" class="on">한 경기 (상점 포함)</button>
-      <button type="button" data-mode="setup">전투 한 판</button>
-      <a class="tablink" href="field.html">유닛 전투 (실험)</a>
+      <span class="tablink on">한 경기 (상점 포함)</span>
+      <a class="tablink" href="field.html">전투 한 판</a>
     </nav>
 
     <!-- ── 한 경기: 사전 선택 ── -->
@@ -50,7 +49,6 @@
         <fieldset>
           <legend>경기</legend>
           <label>모드 <select id="mMode"></select></label>
-          <label>전투 <select id="mBattle"></select></label>
           <label>상점 시간 <select id="mShopTime">
             <option value="0" selected>제한 없음</option>
             <option value="60">60초</option>
@@ -60,7 +58,7 @@
           <div class="row">
             <button id="mStart" type="button" class="primary">경기 시작</button>
           </div>
-          <p class="note" id="mBattleNote"></p>
+          <p class="note">유닛이 필드에 소환돼 걸어가서 싸운다. 결투·연합전은 본진을 부수면 이기고, 난투장은 가운데 원 점령과 처치 점수로 순위를 정한다. 상점 레벨에 따라 시작 카드를 1~3장 고른다.</p>
         </fieldset>
       </div>
     </section>
@@ -134,104 +132,6 @@
       </div>
     </section>
 
-    <!-- ── 설정 화면 ── -->
-    <section id="setup" hidden>
-      <h1>카드 오토배틀러 <small>(가제) · 1:1 결투 플레이 테스트</small></h1>
-      <p class="lead">봇과 한 판 붙어 보는 화면이다. 상점·경제는 아직 없고, 전투 한 판만 한다.
-        카드를 누른 뒤 놓을 칸이나 표적을 누르면 된다. 숫자 키 1~7로 카드를 고르고 Q·W·E·R / A·S·D·F로 칸을 고를 수도 있다.</p>
-
-      <div class="setup-grid">
-        <fieldset>
-          <legend>나</legend>
-          <label>지휘관 <select id="myCommander"></select></label>
-          <label>덱 <select id="myDeckType">
-            <option value="start">시작 덱 (8장)</option>
-            <option value="mid" selected>중반 덱 (무작위)</option>
-          </select></label>
-          <div id="vanguardBox">
-            <label>선봉 <select id="myVanguard"></select></label>
-            <label>선봉 칸 <select id="myVanguardSlot"></select></label>
-          </div>
-          <p class="passive" id="myPassive"></p>
-          <p class="pickhint" id="pickHint"></p>
-          <div class="decklist" id="myDeck"></div>
-        </fieldset>
-
-        <fieldset>
-          <legend>상대 (봇)</legend>
-          <label>지휘관 <select id="opCommander"></select></label>
-          <label>덱 <select id="opDeckType">
-            <option value="start">시작 덱 (8장)</option>
-            <option value="mid" selected>중반 덱 (무작위)</option>
-          </select></label>
-          <label>난이도 <select id="botLevel">
-            <option value="easy">쉬움 (반응 0.8~1.6초, 가끔 실수)</option>
-            <option value="normal" selected>보통 (반응 0.3~1초)</option>
-            <option value="hard">어려움 (반응 0.1~0.3초)</option>
-          </select></label>
-          <p class="passive" id="opPassive"></p>
-          <p class="pickhint" id="opPicks"></p>
-          <div class="decklist" id="opDeck"></div>
-        </fieldset>
-
-        <fieldset>
-          <legend>전투</legend>
-          <label>전장 <select id="battlefield"></select></label>
-          <label>규칙 <select id="preset"></select></label>
-          <label>시드 <input id="seed" type="number" min="1" step="1"></label>
-          <div class="row">
-            <button id="reroll" type="button">덱 다시 뽑기</button>
-            <button id="start" type="button" class="primary">전투 시작</button>
-          </div>
-          <p class="note" id="presetNote"></p>
-          <p class="note">같은 시드와 설정이면 덱과 뽑는 순서가 똑같이 나온다.</p>
-        </fieldset>
-      </div>
-    </section>
-
-    <!-- ── 전투 화면 ── -->
-    <section id="battle" hidden>
-      <header class="topbar">
-        <div class="clock"><span id="clock">0.0</span><small>/ <span id="clockMax">40</span>초</small></div>
-        <div class="timebar"><div id="timefill"></div><div id="overtimeMark"></div></div>
-        <div class="field" id="fieldInfo"></div>
-        <div class="speed" id="speed">
-          <button data-speed="0" title="스페이스">일시정지</button>
-          <button data-speed="0.5">0.5×</button>
-          <button data-speed="1" class="on">1×</button>
-          <button data-speed="2">2×</button>
-        </div>
-        <button id="quit" type="button">그만두기</button>
-      </header>
-
-      <div class="arena">
-        <div class="main">
-          <div class="board" id="board"></div>
-          <div class="hint" id="hint"></div>
-          <div class="hand" id="hand"></div>
-        </div>
-        <aside class="log">
-          <details class="keys" open>
-            <summary>단축키</summary>
-            <table>
-              <tr><td><kbd>1</kbd>~<kbd>7</kbd></td><td>손패 카드 고르기 (표적이 필요 없으면 바로 낸다)</td></tr>
-              <tr><td><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd></td><td>보드 윗줄의 칸 1~4</td></tr>
-              <tr><td><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd></td><td>보드 아랫줄의 칸 1~4</td></tr>
-              <tr><td><kbd>Tab</kbd></td><td>표적으로 삼을 상대 보드 바꾸기 (난전·연합전)</td></tr>
-              <tr><td><kbd>Z</kbd></td><td>다시 뽑기 (누른 뒤 버릴 카드 번호)</td></tr>
-              <tr><td><kbd>X</kbd> <kbd>Esc</kbd></td><td>선택 취소</td></tr>
-              <tr><td><kbd>Space</kbd></td><td>일시정지 / 계속</td></tr>
-              <tr><td><kbd>-</kbd> <kbd>=</kbd></td><td>느리게 / 빠르게</td></tr>
-              <tr><td><kbd>Enter</kbd></td><td>결과 창의 첫 버튼</td></tr>
-            </table>
-            <p class="note">칸 글자는 화면의 위치를 따른다. 내 보드는 윗줄이 전열, 상대 보드는 윗줄이 후열이다. 칸마다 글자가 적혀 있다.</p>
-          </details>
-          <h2>기록</h2>
-          <ol id="log"></ol>
-        </aside>
-      </div>
-    </section>
-
     <!-- ── 한 경기: 유닛 전투 화면 (fieldview.js가 채운다) ── -->
     <section id="fieldBattle" hidden></section>
 
@@ -245,19 +145,6 @@
       </div>
     </div>
 
-    <!-- ── 결과 ── -->
-    <div id="result" hidden>
-      <div class="result-box">
-        <h2 id="resultTitle"></h2>
-        <p id="resultDetail"></p>
-        <table id="resultStats"></table>
-        <div class="row">
-          <button id="again" type="button" class="primary">새 시드로 다시</button>
-          <button id="replay" type="button">같은 시드로 다시</button>
-          <button id="toSetup" type="button">설정으로</button>
-        </div>
-      </div>
-    </div>
   </main>
 
   <script type="module" src="main.js"></script>

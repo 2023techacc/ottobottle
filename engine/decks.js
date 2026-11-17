@@ -2,7 +2,6 @@
 // 상점·경제는 아직 엔진에 없어서, 중반 덱은 등급 확률표로 카드를 뽑아 대신한다.
 
 import { CARDS, COMMANDERS, POOL_CARD_IDS, UNIT_DIAMONDS } from './cards.js';
-import { FRONT, BACK } from './rules.js';
 
 /** 상점 레벨별 등급 확률 (기획서 초안 표) */
 export const SHOP_ODDS = {
@@ -74,7 +73,7 @@ export function randomMidDeck(commander, rng, opts = {}) {
     const bodies = deck.filter((c) => {
       if (c === mat || c.fuse) return false;
       const def = CARDS[c.id];
-      if (def.duelInert) return false;
+      if (def.matchOnly) return false;
       if (UNIT_DIAMONDS.includes(effect)) return def.type === 'unit' && !def.keywords.includes(effect);
       return !def.keywords.includes(effect); // 순환은 어떤 카드에나 붙는다
     });
@@ -85,26 +84,6 @@ export function randomMidDeck(commander, rng, opts = {}) {
   }
 
   return deck;
-}
-
-/**
- * 선봉 고르기: 가장 비싼 유닛 카드를 놓는다. 근접은 전열 가운데, 원거리는 후열.
- * @returns {Array<{index:number,row:number,slot:number}>}
- */
-export function pickVanguard(deck, n = 1, opts = {}) {
-  const maxCost = opts.maxCost ?? Infinity;
-  const units = deck
-    .map((c, index) => ({ c, index, def: CARDS[c.id] }))
-    .filter((x) => x.def.type === 'unit' && x.def.cost <= maxCost)
-    .sort((a, b) => b.def.cost * (b.c.stars || 1) - a.def.cost * (a.c.stars || 1) || a.index - b.index);
-  const frontSlots = [1, 2, 0, 3];
-  const backSlots = [1, 2, 0, 3];
-  const out = [];
-  for (const x of units.slice(0, n)) {
-    if (x.def.ranged && backSlots.length) out.push({ index: x.index, row: BACK, slot: backSlots.shift() });
-    else out.push({ index: x.index, row: FRONT, slot: frontSlots.shift() });
-  }
-  return out;
 }
 
 /**
@@ -121,7 +100,7 @@ export function pickOpening(deck, n, policy = 'tempo', rng = null, startMana = 3
   if (n <= 0 || policy === 'none') return [];
   const all = deck
     .map((c, index) => ({ c, index, def: CARDS[c.id], power: CARDS[c.id].cost * (c.stars || 1) }))
-    .filter((x) => !x.def.duelInert && !x.def.meleeOnly);
+    .filter((x) => !x.def.matchOnly);
   const units = all.filter((x) => x.def.type === 'unit');
   let order;
   switch (policy) {

@@ -49,14 +49,8 @@ export const DEFAULT_RULES = Object.freeze({
   starMult: 1.8, // 유닛 공격·체력
   spellStarMult: 1.5, // 그 밖의 카드 효과 수치
 
-  // 선봉
-  vanguardSlots: 1,
-
   // 시작 카드 고르기: 시작 손패 중 이만큼을 덱에서 직접 고른다 (기획서에 없다. 선봉을 대신하는 실험 규칙)
   openingPicks: 0,
-
-  // 후열에 선 근접 유닛이 빈 전열 칸으로 나오는 데 걸리는 시간 (기획서에 없는 가정)
-  meleeAdvanceMs: 1000,
 
   // 필살기 게이지
   gaugeMax: 100,
@@ -66,28 +60,4 @@ export const DEFAULT_RULES = Object.freeze({
   unitAtkMult: 1, // 모든 유닛 공격력과 필살기 피해
   attackIntervalMult: 1, // 모든 유닛 공격 간격
   commanderDamageMult: 1, // 유닛이 지휘관에게 주는 피해
-  vanguardMaxCost: 99, // 선봉으로 세울 수 있는 유닛의 최대 마나 비용
 });
-
-/**
- * 전투 길이 조정안. sim/tune.mjs 로 찾은 값이다 (README의 "전투 길이 조정" 참고).
- * 기획서 수치는 base, 나머지는 30~45초 목표에 맞춘 후보다.
- */
-export const PRESETS = Object.freeze({
-  base: { name: '기획서 기본', rules: {} },
-  siege: { name: 'A. 지휘관 체력 250', rules: { commanderHp: 250 } },
-  softHits: { name: 'B. 유닛 공격 ×0.35 · 지휘관 60', rules: { unitAtkMult: 0.35, commanderHp: 60 } },
-  mixed: { name: 'C. 유닛 공격 ×0.5 · 체력 ×1.5 · 지휘관 90', rules: { unitAtkMult: 0.5, unitHpMult: 1.5, commanderHp: 90 } },
-  recommended: {
-    name: 'D. 추천: 공격 ×0.5 · 체력 ×1.5 · 지휘관 60 · 선봉 3마나 이하',
-    rules: { unitAtkMult: 0.5, unitHpMult: 1.5, commanderHp: 60, vanguardMaxCost: 3 },
-  },
-  cards: {
-    name: 'E. 카드 위주: 선봉 없음 · 시작 카드 고르기',
-    rules: { unitAtkMult: 0.5, unitHpMult: 1.25, commanderHp: 60, vanguardSlots: 0, openingPicks: 2 },
-  },
-});
-
-export const FRONT = 0;
-export const BACK = 1;
-export const SLOTS = 4;

@@ -11,10 +11,11 @@ import {
 /** 카드 가치 (대략 0~10) */
 export const CARD_VALUE = {
   shield: 6, rats: 4, bat: 5, archer: 5, dagger: 8, frostwitch: 6, lancer: 8, pyro: 8, colossus: 5,
-  firebolt: 6, retreat: 4, purify: 2, chain: 5,
+  turtle: 5, banner: 5, bomber: 5, hammer: 6,
+  firebolt: 6, retreat: 4, purify: 2, chain: 5, blizzard: 5,
   warcry: 4, awaken: 2, armor: 4, phalanx: 2,
   scout: 5, crystal: 5, supply: 3, muster: 3, stockpile: 3,
-  invest: 3, catalyst: 2, disrupt: 5, decree: 0,
+  invest: 3, catalyst: 2, disrupt: 5, decree: 4,
 };
 
 /** 성향: 저축형은 이자를 챙기고, 소비형은 바로 쓴다 */
@@ -67,9 +68,7 @@ export function runDraftBot(game, p) {
 }
 
 function valueOf(c) {
-  const def = CARDS[c.id];
   let v = CARD_VALUE[c.id] ?? 3;
-  if (def.meleeOnly) v = 0;
   v += (c.stars - 1) * 5;
   if (c.fuse) v += 2;
   return v;

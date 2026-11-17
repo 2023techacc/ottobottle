@@ -11,7 +11,11 @@ const FORMATS = {
   duel: { name: '결투 (1:1)', n: 2 },
   melee4: { name: '난투장 (4인 · 중앙 점령)', n: 4 },
   alliance: { name: '연합전 (2:2)', n: 4 },
+  ffa: { name: '대난투 (여럿이 각자)', n: 0 },
 };
+/** 이 형식의 인원 (대난투는 고른 인원) */
+const seatsOf = (format) => (format === 'ffa' ? Number($('ffaCount').value) : FORMATS[format].n);
+const formatName = (format) => (format === 'ffa' ? `대난투 (${seatsOf(format)}인)` : FORMATS[format].name);
 
 // ─────────────────────────────────────────────────────────────
 // 설정
@@ -38,13 +42,14 @@ function deckChips(deck) {
 function roleName(format, i) {
   if (i === ME) return '나';
   if (format === 'alliance') return i === 1 ? '아군' : `상대 ${i - 1}`;
-  return FORMATS[format].n === 2 ? '상대' : `상대 ${i}`;
+  return seatsOf(format) === 2 ? '상대' : `상대 ${i}`;
 }
 
 function refreshSetup() {
   const seed = $('seed').value;
   const format = $('format').value;
-  const n = FORMATS[format].n;
+  const n = seatsOf(format);
+  $('ffaCountRow').hidden = format !== 'ffa';
   const rng = E.makeRng(E.hashSeed(seed, 'others', format, setup.salt));
   setup.players = [];
   for (let i = 0; i < n; i++) {
@@ -74,14 +79,15 @@ function initSetup() {
     ...E.BATTLEFIELD_IDS.map((id) => [id, E.BATTLEFIELDS[id].name]),
   ], 'none');
   $('seed').value = String(1 + Math.floor(Math.random() * 99999));
-  for (const id of ['myCommander', 'myDeckType', 'opCommander', 'opDeckType', 'seed', 'format']) $(id).addEventListener('change', refreshSetup);
+  fillSelect($('ffaCount'), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((k) => [String(k), `${k}명`]), '8');
+  for (const id of ['myCommander', 'myDeckType', 'opCommander', 'opDeckType', 'seed', 'format', 'ffaCount']) $(id).addEventListener('change', refreshSetup);
   $('reroll').addEventListener('click', () => {
     setup.salt++;
     refreshSetup();
   });
   $('start').addEventListener('click', () => startBattle());
   const r = F.FIELD_RULES;
-  $('rulesNote').textContent = `지휘관 체력 ${r.commanderHp} · 유닛 공격 ×${r.unitAtkMult} · 유닛 체력 ×${r.unitHpMult} · 유닛은 ${r.unitCap}기까지 · 난투장은 본진을 치지 않는다. 가운데 원 안에 유닛이 가장 많은 사람이 1초에 1점, 적 유닛을 쓰러뜨리면 ${r.killScore}점(원 안이면 ${r.killScore * r.killZoneMult}점)을 얻어 ${r.captureGoal}점에 먼저 닿으면 이긴다`;
+  $('rulesNote').textContent = `지휘관 체력 ${r.commanderHp} · 유닛 공격 ×${r.unitAtkMult} · 유닛 체력 ×${r.unitHpMult} · 유닛은 ${r.unitCap}기까지 · 난투장은 본진을 치지 않는다. 가운데 원 안에 유닛이 가장 많은 사람이 1초에 1점, 적 유닛을 쓰러뜨리면 ${r.killScore}점(원 안이면 ${r.killScore * r.killZoneMult}점)을 얻어 ${r.captureGoal}점에 먼저 닿으면 이긴다. 대난투는 ${F.FFA_RULES.battleMs / 1000}초 동안 각자 싸운다: 유닛 카드 한 장에 ${F.FFA_RULES.squadSize}기, 본진은 가까이(${F.FFA_RULES.baseGuardRange}) 있는 자기 유닛만 지킨다`;
   $('statTable').innerHTML = `<div class="decklist">${Object.entries(F.FIELD_STATS).filter(([id]) => !E.CARDS[id].special).map(([id, s]) => {
     const def = E.CARDS[id];
     return `<span class="chip unit" title="${esc(F.fieldText(id))}"><b>${def.cost}</b>${esc(def.name)} · ${def.ranged ? '원거리' : '근접'} · 사거리 ${s.range} · 속도 ${s.speed}</span>`;
@@ -108,7 +114,7 @@ function startBattle() {
   view.start({
     cfg: { seed, format, battlefield, players: setup.players.map((p, i) => ({ ...p, name: roleName(format, i) })) },
     botOpts: { seed, ...E.BOT_LEVELS[$('botLevel').value] },
-    label: FORMATS[format].name,
+    label: formatName(format),
     onFinish: showResult,
   });
 }
@@ -138,7 +144,7 @@ function showResult(state) {
     title.className = res.winner === ME ? 'win' : res.winner === -1 ? '' : 'lose';
     title.textContent = res.winner === ME ? '승리' : res.winner === -1 ? '무승부' : '패배';
   }
-  $('resultDetail').textContent = `${FORMATS[state.format].name} · ${(res.timeMs / 1000).toFixed(1)}초 · ${endReason(state)} · 시드 ${state.seed}`;
+  $('resultDetail').textContent = `${formatName(state.format)} · ${(res.timeMs / 1000).toFixed(1)}초 · ${endReason(state)} · 시드 ${state.seed}`;
   const order = [...state.players].sort((A, B) => res.ranks[A.idx] - res.ranks[B.idx] || A.idx - B.idx);
   const cap = !!state.capture;
   $('resultStats').innerHTML = `<tr><th></th><th>순위</th><th>${cap ? '점수 <small>(원 + 처치)</small>' : '지휘관 체력'}</th>${cap ? '<th>쓰러뜨린 유닛</th>' : ''}<th>낸 카드</th><th>유닛에 준 피해</th>${cap ? '' : '<th>지휘관에 준 피해</th>'}<th>걸은 거리</th></tr>${order.map((P) => `

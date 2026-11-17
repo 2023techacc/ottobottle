@@ -1,12 +1,12 @@
 {
   "name": "ottobottle",
   "version": "0.1.0",
-  "description": "카드 오토배틀러 (가제) — 1:1 결투 엔진, 봇, 시뮬레이터, 웹 플레이 화면",
+  "description": "카드 오토배틀러 (가제) — 유닛 소환 전투 엔진, 상점·경기, 봇, 시뮬레이터, 웹 플레이 화면",
   "type": "module",
   "private": true,
   "scripts": {
     "test": "node --test",
-    "sim": "node sim/run.mjs",
+    "sim": "node sim/field.mjs --format all",
     "web": "node tools/serve.mjs"
   }
 }

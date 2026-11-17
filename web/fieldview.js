@@ -11,8 +11,12 @@ const F = E.Field;
 const ME = 0;
 const TYPE_NAMES = { unit: '유닛', spell: '주문', buff: '강화', ops: '운영' };
 /** 형식별 필드 최대 너비(px) */
-const MAX_WIDTH = { duel: 500, boss: 500, melee4: 640, alliance: 860 };
-const COLORS = { me: '#4f9dff', ally: '#5fd08a', foes: ['#ff6b6b', '#f2a14e', '#c08bff'], boss: '#b0894f' };
+const MAX_WIDTH = { duel: 500, boss: 500, melee4: 640, alliance: 860, ffa: 880 };
+const COLORS = {
+  me: '#4f9dff', ally: '#5fd08a', boss: '#b0894f',
+  // 상대 색: 대난투는 11명까지라 넉넉히
+  foes: ['#ff6b6b', '#f2a14e', '#c08bff', '#e8d44d', '#4fd1c5', '#ff8fd0', '#a3e05f', '#9aa5ff', '#d9925b', '#7fdbff', '#c9c9c9'],
+};
 export const fmt = (x) => (Math.abs(x - Math.round(x)) < 0.05 ? String(Math.round(x)) : x.toFixed(1));
 export const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -24,15 +28,6 @@ const KEY_ROWS = [
 ];
 const KEY_LETTERS = ['QWERT', 'ASDFG', 'ZXCVB'];
 const SPEEDS = [0.5, 1, 2];
-
-export const FIELD_EFFECTS = {
-  rain: '원거리 유닛의 공격 간격 +20%',
-  canyon: '배치 칸의 양쪽 끝 줄을 쓸 수 없다',
-  fog: '처음 5초 동안 원거리 유닛은 표적이 되지 않는다',
-  citadel: '근접 유닛 체력 +20%',
-  surge: '필살기 게이지 충전 +50%',
-  volcano: '10초마다 모든 유닛이 최대 체력의 5% 피해를 받는다',
-};
 
 /** 전투가 끝난 까닭 */
 export function endReason(state) {
@@ -128,8 +123,11 @@ export function createFieldView(root, opts = {}) {
     el.clockMax.textContent = String(state.rules.battleMs / 1000);
     el.overtimeMark.style.left = `${(state.rules.overtimeMs / state.rules.battleMs) * 100}%`;
     const bf = state.battlefield;
-    el.fieldInfo.textContent = `${label ? `${label} · ` : ''}${bf ? `전장: ${E.BATTLEFIELDS[bf].name} — ${FIELD_EFFECTS[bf]}` : '전장: 없음'}`;
+    el.fieldInfo.textContent = `${label ? `${label} · ` : ''}${bf ? `전장: ${E.BATTLEFIELDS[bf].name} — ${E.BATTLEFIELDS[bf].text}` : '전장: 없음'}`;
     el.log.innerHTML = '';
+    // 첩보원: 상대가 고른 시작 카드
+    const known = state.players[ME].knownEnemyOpening;
+    if (known && known.length) logLine(0, ME, `<b>첩보원</b> 상대가 고른 시작 카드: ${esc(known.map((c) => E.cardLabel(c)).join(', '))}`);
     buildArena();
     setSpeed(1);
     consumeEvents();
@@ -222,7 +220,10 @@ export function createFieldView(root, opts = {}) {
         d.className = `dcell${p === ME ? ' mine' : ''}${c.blocked ? ' blocked' : ''}`;
         const [px, py] = toPx(c.x, c.y);
         const size = F.CELL * v.scale - 4;
-        Object.assign(d.style, { left: `${px}px`, top: `${py}px`, width: `${size}px`, height: `${size}px` });
+        // 자리의 전진 방향에 맞춰 칸을 돌린다 (대난투는 자리가 비스듬하다)
+        const seat = state.arena.seats[p];
+        const deg = Math.round((Math.atan2(seat.fx, seat.fy) * 180) / Math.PI);
+        Object.assign(d.style, { left: `${px}px`, top: `${py}px`, width: `${size}px`, height: `${size}px`, transform: `translate(-50%, -50%) rotate(${deg}deg)` });
         if (p === ME) {
           d.dataset.cell = c.i;
           d.innerHTML = `<span class="keyhint">${KEY_LETTERS[F.DEPLOY_ROWS - 1 - c.row][c.col]}</span>`;
@@ -280,6 +281,7 @@ export function createFieldView(root, opts = {}) {
   function renderUnits(targets) {
     const { state } = game;
     const v = view();
+    const marked = new Set(state.players.filter((P) => P.decree && P.decree.until > state.timeMs).map((P) => P.decree.unitId));
     const alive = new Set();
     for (const u of state.units) {
       alive.add(u.id);
@@ -305,6 +307,7 @@ export function createFieldView(root, opts = {}) {
       node.querySelector('.hp i').style.width = `${Math.max(0, (u.hp / u.maxHp) * 100)}%`;
       if (u.ult) node.querySelector('.gz i').style.width = `${u.telegraphing ? 100 : u.gauge}%`;
       node.classList.toggle('casting', u.telegraphing);
+      node.classList.toggle('marked', marked.has(u.id));
       node.classList.toggle('target', targets.units.has(u.id));
       node.title = unitTitle(state, u);
     }
@@ -507,6 +510,17 @@ export function createFieldView(root, opts = {}) {
     setTimeout(() => f.remove(), 750);
   }
 
+  /** 폭발·눈보라 범위를 잠깐 그린다 */
+  function ring(x, y, radius, cls = '') {
+    const r = document.createElement('div');
+    r.className = `fblast ${cls}`;
+    const [px, py] = toPx(x, y);
+    const size = radius * 2 * view().scale;
+    Object.assign(r.style, { left: `${px}px`, top: `${py}px`, width: `${size}px`, height: `${size}px` });
+    el.arena.append(r);
+    setTimeout(() => r.remove(), 450);
+  }
+
   function shotLine(from, to, color) {
     const svg = el.arena.querySelector('.shots');
     if (!svg) return;
@@ -547,6 +561,12 @@ export function createFieldView(root, opts = {}) {
           floatAt(e.x, e.y + 0.6, `+${fmt(e.points)}점`, `score${e.by.includes(ME) ? ' mine' : ''}`);
           break;
         case 'teleport': game.jumped.add(e.unitId); break;
+        case 'decree': {
+          const u = F.findUnit(state, e.unitId);
+          logLine(e.t, e.p, `${who(e.p)} 포고: ${u ? `${who(u.owner)}의 ${esc(u.name)}` : '적 유닛'} 지목`, 'warn');
+          break;
+        }
+        case 'blast': ring(e.x, e.y, e.radius, e.spell ? 'spell' : ''); break;
         case 'damage': {
           const d = dmg.get(e.unitId) || { x: e.x, y: e.y, amount: 0 };
           d.amount += e.amount;

@@ -35,6 +35,10 @@ export const FIELD_STATS = Object.freeze({
   lancer: { range: 1.5, speed: 4.4, radius: 0.5 },
   pyro: { range: 8, speed: 2.8, radius: 0.4 },
   colossus: { range: 1.7, speed: 2.2, radius: 0.8 },
+  turtle: { range: 1.3, speed: 2.6, radius: 0.55 },
+  banner: { range: 1.3, speed: 3.8, radius: 0.45 },
+  bomber: { range: 1.2, speed: 5, radius: 0.4 },
+  hammer: { range: 1.5, speed: 3.5, radius: 0.55 },
   boss: { range: 2.2, speed: 0, radius: 1.3 }, // 보스 레이드의 고대 골렘: 제자리에 서 있다
 });
 
@@ -43,7 +47,6 @@ export const FIELD_RULES = Object.freeze({
   commanderHp: 40,
   unitAtkMult: 0.5,
   unitHpMult: 1.25,
-  vanguardSlots: 0,
   unitCap: 8, // 한 플레이어가 필드에 둘 수 있는 유닛 수. 가득 차면 기존 유닛 하나를 대체한다.
   baseRadius: 1, // 본진(지휘관)의 크기
   nearRange: 1.7, // 수호·집결이 닿는 거리
@@ -69,22 +72,35 @@ export const FIELD_RULES = Object.freeze({
   // 지휘관은 피해를 받지 않고 40초를 채운다. 보스에게 준 피해가 점수다.
   bossY: 2.5,
   bossSlamRadius: 3.8,
+  // 대난투(FFA): 여럿이 한 필드에서 마지막 한 명이 남을 때까지 싸운다. 필드는 인원에 맞춰 커진다.
+  squadSize: 1, // 유닛 카드 한 장으로 나오는 유닛 수 (대난투만 늘린다)
+  // 원의 반지름 = ffaRadiusBase + 인원 × ffaRadiusPerSeat (8명이면 17.6). 이웃의 배치 칸끼리 겹치지 않는 가장 작은 크기다.
+  ffaRadiusBase: 4,
+  ffaRadiusPerSeat: 1.7,
+  ffaMinPlayers: 3,
+  ffaMaxPlayers: 12,
 });
 
-/** 전열·후열이 없어져서 뜻이 달라진 카드의 설명 */
-export const FIELD_TEXT = Object.freeze({
-  boss: '보스. 쓰러지지 않고 움직이지 않는다. 10초마다 전조 1.5초 뒤 자기 주변 넓은 범위에 피해',
-  shield: '◆수호: 가까이 있는 아군이 받는 피해의 20%를 대신 받는다',
-  dagger: '◆암살: 적 원거리 유닛부터 노린다',
-  lancer: '◆관통: 표적 바로 뒤의 적에게도 50% 피해',
-  pyro: '필살기(전조 1초): 표적 주변 범위에 피해 20',
-  colossus: '받는 군중 제어 절반. 필살기(전조 1.2초): 자기 주변 넓은 범위에 피해 25',
-  retreat: '내 유닛 하나를 내 배치 칸으로 옮기고 체력 5 회복',
-  warcry: '근접 유닛 전체 공격 +2 (6초)',
-  phalanx: '내 원거리 유닛이 3초간 받는 범위 피해 50% 감소',
+/**
+ * 대난투에서만 바뀌는 전투 규칙. 8명이 봇끼리 싸울 때 필드에 평균 40기 넘게 서 있도록 맞췄다
+ * (README "대난투" 참고). 카드가 들어오는 속도보다 유닛이 죽는 속도가 빨라서, 분대 소환이 가장 크게 듣는다.
+ */
+export const FFA_RULES = Object.freeze({
+  battleMs: 75000,
+  overtimeMs: 55000,
+  squadSize: 3, // 유닛 카드 한 장에 3기
+  unitCap: 16,
+  unitHpMult: 2.5,
+  startMana: 5,
+  manaIntervalMs: 1000,
+  drawIntervalMs: 1500,
+  // 본진은 가까이(4) 있는 자기 유닛만 지킨다. 멀리 싸우러 나간 사이에 본진을 털릴 수 있다.
+  baseGuardRange: 4,
+  commanderDamageMult: 2,
 });
 
-export const fieldText = (id) => FIELD_TEXT[id] || CARDS[id].text || '';
+/** 카드 설명 (예전에는 칸 전투와 설명이 달라서 따로 두었다) */
+export const fieldText = (id) => CARDS[id].text || '';
 
 const fail = (reason) => ({ ok: false, reason });
 const OK = { ok: true };
@@ -98,19 +114,20 @@ const OK = { ok: true };
  *   결투: 가로 10 × 세로 12 직사각형. 아래와 위에 본진.
  *   연합전: 가로 20 × 세로 12. 아래쪽에 한 팀의 본진 둘, 위쪽에 상대 팀의 본진 둘.
  *   난투장: 반지름 10인 원. 본진 넷이 둘레에 같은 간격으로 놓인다 (0번이 아래, 시계 방향).
+ *   대난투: 반지름이 "4 + 인원 × 1.7"인 원. 본진 n개가 둘레에 같은 간격으로 놓인다.
  * 자리마다 본진 위치(bx, by)와 전진 방향(fx, fy)이 있다.
  */
-export function makeArena(format, meleeRadius = 10) {
+export function makeArena(format, meleeRadius = 10, n = 0, ffa = FIELD_RULES) {
   const seat = (bx, by, fx, fy) => ({ bx, by, fx, fy, rx: fy, ry: -fx }); // (rx, ry)는 그 자리에서 본 오른쪽
   if (format === 'alliance') {
     return { shape: 'rect', w: 20, h: 12, seats: [seat(-5, -6, 0, 1), seat(5, -6, 0, 1), seat(-5, 6, 0, -1), seat(5, 6, 0, -1)] };
   }
-  if (format === 'melee4') {
-    const n = 4;
-    const r = meleeRadius;
+  if (format === 'melee4' || format === 'ffa') {
+    const count = format === 'melee4' ? 4 : n;
+    const r = format === 'melee4' ? meleeRadius : Math.round((ffa.ffaRadiusBase + count * ffa.ffaRadiusPerSeat) * 10) / 10;
     const seats = [];
-    for (let k = 0; k < n; k++) {
-      const a = -Math.PI / 2 - (k * 2 * Math.PI) / n;
+    for (let k = 0; k < count; k++) {
+      const a = -Math.PI / 2 - (k * 2 * Math.PI) / count;
       const c = Math.round(Math.cos(a) * 1e9) / 1e9;
       const s = Math.round(Math.sin(a) * 1e9) / 1e9;
       seats.push(seat(c * r, s * r, -c, -s));
@@ -170,19 +187,24 @@ function clampToArena(state, u) {
 /**
  * @param {object} cfg
  * @param {number} cfg.seed
- * @param {'duel'|'melee4'|'alliance'|'boss'} [cfg.format]  연합전은 0·1번이 한 팀, 2·3번이 한 팀. 난투장은 중앙 점령.
+ * @param {'duel'|'melee4'|'alliance'|'boss'|'ffa'} [cfg.format]  연합전은 0·1번이 한 팀, 2·3번이 한 팀. 난투장은 중앙 점령.
+ *   대난투(ffa)는 3~12명이 각자 싸운다. 마지막까지 지휘관이 남은 사람이 이긴다.
  *   보스 레이드는 players[1]에 { boss: true }를 주면 그 자리에 보스 유닛 하나가 선다.
  * @param {Array<{commander:string, deck:Array<{id:string,stars?:number,fuse?:string}>, name?:string, seed?:number,
  *   opening?:number[], bonus?:{startMana?:number,maxMana?:number,startHand?:number,openingPicks?:number}}>} cfg.players
  * @param {string|null} [cfg.battlefield]
  * @param {object} [cfg.rules]  FIELD_RULES에 덮어쓸 값
  * @param {boolean} [cfg.logEvents]
+ * @param {boolean} [cfg.stakes]  한 경기 안의 전투인가 (투자처럼 경기에서만 효과가 있는 카드가 뜻을 가진다)
  */
 export function createField(cfg) {
-  const rules = { ...DEFAULT_RULES, ...FIELD_RULES, ...(cfg.rules || {}) };
-  const seed = (cfg.seed ?? 1) >>> 0;
   const format = cfg.format || 'duel';
-  const arena = makeArena(format, rules.meleeRadius);
+  const rules = { ...DEFAULT_RULES, ...FIELD_RULES, ...(format === 'ffa' ? FFA_RULES : {}), ...(cfg.rules || {}) };
+  const seed = (cfg.seed ?? 1) >>> 0;
+  if (format === 'ffa' && (cfg.players.length < rules.ffaMinPlayers || cfg.players.length > rules.ffaMaxPlayers)) {
+    throw new Error(`대난투는 ${rules.ffaMinPlayers}~${rules.ffaMaxPlayers}명이어야 한다`);
+  }
+  const arena = makeArena(format, rules.meleeRadius, cfg.players.length, rules);
   if (arena.seats.length !== cfg.players.length) throw new Error(`${format} 형식은 ${arena.seats.length}명이어야 한다`);
   const state = {
     mode: 'field',
@@ -194,6 +216,7 @@ export function createField(cfg) {
     over: false,
     result: null,
     battlefield: cfg.battlefield || null,
+    stakes: Boolean(cfg.stakes),
     // 난투장: 점령 원. holder는 지금 점수를 얻고 있는 플레이어(-1이면 없음), counts는 원 안의 유닛 수
     capture: format === 'melee4'
       ? { x: 0, y: 0, radius: rules.captureRadius, goal: rules.captureGoal, holder: -1, counts: cfg.players.map(() => 0) }
@@ -236,7 +259,10 @@ export function createField(cfg) {
       lastPlayed: null,
       unitDiscount: { count: 0, amount: 0 },
       phalanxUntil: 0,
+      decree: null, // 포고: { unitId, until, amount } 이 유닛을 내 유닛 전체가 먼저 노린다
       invested: false,
+      openingCards: [],
+      knownEnemyOpening: null, // 첩보원: 상대들이 고른 시작 카드
       rng: makeRng(pc.seed ?? hashSeed(seed, 'deck', idx)),
       stats: {
         cardsPlayed: 0, plays: {}, manaSpent: 0, manaWasted: 0, manaCapMs: 0, handFullMs: 0,
@@ -258,8 +284,15 @@ export function createField(cfg) {
     const maxPicks = Math.min(startHand, rules.openingPicks + (bonus.openingPicks || 0));
     const picked = [...new Set(pc.opening || [])].slice(0, maxPicks).map((i) => P.deck.find((c) => c.order === i)).filter(Boolean);
     if (picked.length) P.deck = [...P.deck.filter((c) => !picked.includes(c)), ...[...picked].reverse()];
+    P.openingCards = picked.map((c) => ({ id: c.id, stars: c.stars, fuse: c.fuse }));
     for (let i = 0; i < startHand; i++) drawCard(state, P);
   });
+
+  // 첩보원: 상대들이 고른 시작 카드를 미리 본다. 그 밖의 지휘관에게는 비공개다.
+  for (const P of state.players) {
+    if (!COMMANDERS[P.commander].seesOpening) continue;
+    P.knownEnemyOpening = state.players.filter((Q) => isEnemy(state, P.idx, Q.idx)).flatMap((Q) => Q.openingCards);
+  }
 
   // 보스: 지휘관은 쓰러지지 않고, 보스 유닛 하나가 필드 위쪽 가운데에 선다
   for (const P of state.players) {
@@ -321,7 +354,7 @@ export function overtimeMult(state) {
 export function currentAtk(state, u) {
   let atk = u.atk;
   for (const b of u.buffs) if (b.kind === 'atk') atk += b.amount;
-  if (hasKw(u, 'rally')) atk += state.rules.rallyAtk * nearbyAllies(state, u).length;
+  if (hasKw(u, 'rally')) atk += state.rules.rallyAtk * state.rules.unitAtkMult * nearbyAllies(state, u).length;
   return atk * overtimeMult(state);
 }
 
@@ -391,6 +424,16 @@ export function chooseTarget(state, u) {
     const reach = cap.radius * state.rules.captureHold;
     return { zone: true, x: cap.x, y: cap.y, d, reach, inRange: q6(d) <= q6(reach) };
   }
+  // 포고: 지목한 유닛이 살아 있으면 거리와 상관없이 그 유닛부터
+  const dec = state.players[u.owner].decree;
+  if (dec && dec.until > state.timeMs) {
+    const marked = state.units.find((x) => x.id === dec.unitId && !x.dying && targetable(state, x) && isEnemy(state, u.owner, x.owner));
+    if (marked) {
+      const d = distance(u, marked);
+      const reach = u.range + marked.radius - 0.45;
+      return { unit: marked, x: marked.x, y: marked.y, d, reach, prio: 0, turn: 0, id: marked.id, inRange: q6(d) <= q6(reach) };
+    }
+  }
   const current = cands.find((c) => c.unit && c.unit.id === u.targetId);
   if (current && q6(current.d) <= q6(current.reach)) return { ...current, inRange: true };
   const rank = (c) => (assassin && c.unit && c.unit.ranged ? 0 : c.prio);
@@ -444,6 +487,9 @@ export function summonUnit(state, owner, x, y, c) {
     keywords,
     ccResist: def.ccResist || 1,
     ult: def.ult ? { ...def.ult, damage: def.ult.damage ? def.ult.damage * atkMult : undefined } : null,
+    deathDamage: (def.deathDamage || 0) * atkMult, // 유언
+    deathRadius: def.deathRadius || 0,
+    knockback: def.knockback || 0,
     gauge: 0,
     attackTimer: 0,
     targetId: null,
@@ -480,6 +526,7 @@ function summonToken(state, parent, x, y) {
     maxHp: parent.baseMaxHp / 2,
     baseMaxHp: parent.baseMaxHp / 2,
     keywords: parent.keywords.filter((k) => k !== 'split'),
+    deathDamage: parent.deathDamage / 2,
     ult: null,
     gauge: 0,
     attackTimer: 0,
@@ -516,6 +563,10 @@ function dealDamage(state, target, amount, opts = {}) {
   const r = state.rules;
   // 방진: 내 원거리 유닛이 받는 범위 피해 감소
   if (opts.aoe && target.ranged && state.players[target.owner].phalanxUntil > state.timeMs) amount *= 0.5;
+  if (opts.source && !opts.guarded) {
+    const dec = state.players[opts.source.owner].decree;
+    if (dec && dec.unitId === target.id && dec.until > state.timeMs) amount *= 1 + dec.amount;
+  }
 
   let dealt = 0;
   if (!opts.noGuard) {
@@ -685,6 +736,7 @@ export function step(state) {
     if (tg && !tg.zone && tg.inRange && u.attackTimer >= iv) ready.push({ u, tg, iv });
   }
   simultaneously(state, () => attackAll(state, ready, dt));
+  applyKnockback(state);
 
   // 이동: 사거리 안에 표적이 없는 유닛은 표적 쪽으로 걷는다 (난투장에서 상대할 적이 없으면 점령 원으로).
   // 모두 같은 순간의 위치를 보고 움직인다.
@@ -722,6 +774,21 @@ function scoreCapture(state) {
   if (holder >= 0) {
     state.players[holder].capMs += state.rules.tickMs;
     state.players[holder].stats.zoneScore += state.rules.tickMs / 1000;
+  }
+}
+
+/** 이번 틱에 모인 넉백을 한꺼번에 적용한다 */
+function applyKnockback(state) {
+  for (const u of state.units) {
+    if (!u.kbx && !u.kby) continue;
+    if (!u.dying) {
+      u.x += u.kbx;
+      u.y += u.kby;
+      clampToArena(state, u);
+      emit(state, { type: 'knockback', p: u.owner, unitId: u.id, x: u.x, y: u.y });
+    }
+    u.kbx = 0;
+    u.kby = 0;
   }
 }
 
@@ -801,7 +868,15 @@ function hitUnit(state, u, target, atk) {
     if (behind) dealt += dealDamage(state, behind, atk * r.pierceShare, { source: u });
   }
   if (hasKw(u, 'lifesteal')) u.pendingHeal += dealt * r.lifesteal;
-  if (!u.ranged && hasKw(target, 'thorns')) dealDamage(state, u, r.thornsDamage, { noGuard: true });
+  if (!u.ranged && hasKw(target, 'thorns')) dealDamage(state, u, r.thornsDamage * r.unitAtkMult, { noGuard: true, source: { owner: target.owner } });
+  // 넉백: 공격한 방향으로 표적을 밀어낸다 (군중 제어 저항만큼 덜, 걷지 않는 보스는 밀리지 않는다).
+  // 같은 순간의 공격끼리 순서가 생기지 않게, 모아 두었다가 공격이 모두 끝난 뒤에 한꺼번에 옮긴다.
+  if (u.knockback > 0 && target.speed > 0) {
+    const d = distance(u, target) || 1;
+    const push = u.knockback * target.ccResist;
+    target.kbx = (target.kbx || 0) + ((target.x - u.x) / d) * push;
+    target.kby = (target.kby || 0) + ((target.y - u.y) / d) * push;
+  }
   if (hasKw(u, 'frost')) applySlow(state, target);
 }
 
@@ -837,8 +912,26 @@ function finishTick(state) {
 }
 
 function resolveDeaths(state) {
-  const dead = state.units.filter((u) => u.dying);
+  for (let wave = 0; wave < 20; wave++) {
+    const dead = state.units.filter((u) => u.dying);
+    if (!dead.length) return;
+    resolveWave(state, dead);
+  }
+}
+
+function resolveWave(state, dead) {
   for (const u of dead) removeUnit(state, u, true);
+  // 유언: 쓰러진 유닛들이 동시에 터진다
+  simultaneously(state, () => {
+    for (const u of dead) {
+      if (!(u.deathDamage > 0)) continue;
+      emit(state, { type: 'blast', p: u.owner, unitId: u.id, x: u.x, y: u.y, radius: u.deathRadius });
+      for (const x of [...state.units]) {
+        if (!isEnemy(state, u.owner, x.owner)) continue;
+        if (q6(Math.hypot(x.x - u.x, x.y - u.y)) <= q6(u.deathRadius + x.radius)) dealDamage(state, x, u.deathDamage, { aoe: true, source: { owner: u.owner } });
+      }
+    }
+  });
   for (const u of dead) {
     if (!hasKw(u, 'split')) continue;
     // 쓰러진 자리 양옆에 작은 복제 2개 (겹치면 서로 밀려난다)
@@ -1012,7 +1105,6 @@ function basicPlayable(state, p, c) {
   if (state.over) return fail('전투가 끝났다');
   if (state.players[p].dead) return fail('지휘관이 쓰러졌다');
   const def = CARDS[c.id];
-  if (def.meleeOnly) return fail('유닛 전투에는 아직 없는 카드');
   if (effectiveCost(state, p, c) > state.players[p].mana) return fail('마나가 모자라다');
   return OK;
 }
@@ -1190,7 +1282,17 @@ function doPlay(state, p, uid, target) {
       at = { x: old.x, y: old.y };
       removeUnit(state, old, false); // 대체된 유닛은 버린 더미로
     } else at = cellAt(target.cell);
-    summonUnit(state, p, at.x, at.y, c);
+    const lead = summonUnit(state, p, at.x, at.y, c);
+    // 분대(대난투): 유닛 카드 한 장으로 같은 유닛이 여럿 나온다. 더 나온 유닛은 카드가 없어서 쓰러져도 버린 더미로 가지 않는다.
+    // 유닛 수 한도를 넘지 않는 만큼만 나온다.
+    const s = state.arena.seats[p];
+    for (let k = 1; k < r.squadSize && unitsOf(state, p).filter((u) => !u.dying).length < r.unitCap; k++) {
+      const side = k % 2 === 1 ? 1 : -1;
+      const off = 0.5 * Math.ceil(k / 2);
+      const extra = summonUnit(state, p, at.x + s.rx * off * side, at.y + s.ry * off * side, { id: c.id, stars: c.stars, fuse: c.fuse });
+      extra.squadOf = lead.id;
+      clampToArena(state, extra);
+    }
   } else {
     switch (c.id) {
       case 'firebolt':
@@ -1286,6 +1388,25 @@ function doPlay(state, p, uid, target) {
       case 'disrupt':
         applySilence(state, findUnit(state, target.unitId), def.durationMs);
         break;
+      case 'decree': {
+        const u = findUnit(state, target.unitId);
+        P.decree = { unitId: u.id, until: t + def.durationMs * sc, amount: def.amount };
+        emit(state, { type: 'decree', p, unitId: u.id, until: P.decree.until });
+        break;
+      }
+      case 'blizzard': {
+        // 표적과 그 주변의 적 모두 (누구의 유닛이든 적이면)
+        const center = findUnit(state, target.unitId);
+        const at = { x: center.x, y: center.y };
+        emit(state, { type: 'blast', p, x: at.x, y: at.y, radius: def.radius, spell: true });
+        for (const x of [...state.units]) {
+          if (x.dying || !isEnemy(state, p, x.owner) || !targetable(state, x)) continue;
+          if (x !== center && q6(Math.hypot(x.x - at.x, x.y - at.y)) > q6(def.radius + x.radius)) continue;
+          dealDamage(state, x, def.damage * sc, { aoe: true, source: { owner: p } });
+          applySlow(state, x);
+        }
+        break;
+      }
       default:
         break;
     }

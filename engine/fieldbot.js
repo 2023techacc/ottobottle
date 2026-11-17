@@ -3,11 +3,17 @@
 
 import { CARDS } from './cards.js';
 import { makeRng, hashSeed } from './rng.js';
-import { BOT_LEVELS } from './bot.js';
 import {
   createField, step, applyActions, legalTargets, effectiveCost, unitsOf, deployCells, canRedraw, targetable,
   enemiesOf, isEnemy, distance,
 } from './field.js';
+
+/** 봇 난이도: 반응 지연(밀리초)과 엉뚱한 카드를 낼 확률 */
+export const BOT_LEVELS = {
+  easy: { reactMin: 800, reactMax: 1600, mistake: 0.3 },
+  normal: { reactMin: 300, reactMax: 1000, mistake: 0.05 },
+  hard: { reactMin: 100, reactMax: 300, mistake: 0 },
+};
 
 /**
  * @param {{style?:'smart'|'random', seed?:number, reactMin?:number, reactMax?:number, mistake?:number}} [opts]
@@ -37,7 +43,7 @@ function thinkRandom(state, p, rng) {
   if (rng() < 0.3) return null;
   const options = [];
   for (const c of P.hand) {
-    if (CARDS[c.id].duelInert) continue;
+    if (CARDS[c.id].matchOnly && !state.stakes) continue;
     for (const target of legalTargets(state, p, c.uid)) options.push({ type: 'play', uid: c.uid, target });
   }
   if (!options.length) {
@@ -50,6 +56,22 @@ function thinkRandom(state, p, rng) {
 /** 체력을 견줄 때는 소수점 아래 여섯 자리까지만 본다. 같으면 시계 방향으로 가까운 상대의 유닛이 앞선다 (theirs의 순서). */
 const hp6 = (u) => Math.round(u.hp * 1e6);
 
+/**
+ * 견제할 상대: 난투장에서 나보다 점수가 높은 상대 중 1위. 없으면 -1.
+ * 점수가 같으면 시계 방향으로 가까운 상대 (어느 자리에서나 같은 기준).
+ */
+export function leaderOf(state, p) {
+  if (!state.capture) return -1;
+  const me = state.players[p].capMs;
+  let best = -1;
+  for (const q of enemiesOf(state, p)) {
+    const Q = state.players[q];
+    if (Q.capMs <= me) continue;
+    if (best < 0 || Q.capMs > state.players[best].capMs) best = q;
+  }
+  return best;
+}
+
 function thinkSmart(state, p, rng, o) {
   const P = state.players[p];
   const r = state.rules;
@@ -60,6 +82,11 @@ function thinkSmart(state, p, rng, o) {
   const incoming = state.telegraphs.filter((g) => isEnemy(state, p, g.owner));
   const threatened = (x, y, radius = 0.45) => incoming.some((g) => Math.hypot(g.x - x, g.y - y) <= g.radius + radius);
   const cost = (c) => effectiveCost(state, p, c);
+  // 1위 견제: 주문은 앞서는 상대의 유닛을 먼저 노린다
+  const lead = leaderOf(state, p);
+  const pri = (u) => (u.owner === lead ? 1 : 0);
+  const bonus = (u) => (u && u.owner === lead ? 3 : 0);
+  const value = (u) => (u.token ? 0.5 : CARDS[u.defId].cost * u.stars);
   const cands = [];
   const add = (score, c, target) => {
     if (score > 0) cands.push({ score, action: { type: 'play', uid: c.uid, target } });
@@ -68,7 +95,8 @@ function thinkSmart(state, p, rng, o) {
   for (const c of P.hand) {
     const def = CARDS[c.id];
     const k = cost(c);
-    if (k > P.mana || def.meleeOnly || def.duelInert) continue;
+    if (k > P.mana) continue;
+    if (def.matchOnly && !state.stakes) continue;
 
     if (def.type === 'unit') {
       const place = bestSpot(state, p, c, mine, theirs, threatened);
@@ -84,16 +112,35 @@ function thinkSmart(state, p, rng, o) {
         if (!theirs.length) break;
         const combo = t - P.lastPlayAt <= r.comboWindowMs;
         const dmg = combo ? def.comboDamage : def.damage;
-        const kills = theirs.filter((u) => u.hp <= dmg).sort((a, b) => hp6(b) - hp6(a));
-        if (kills.length) add(12 + kills[0].maxHp / 4, c, { unitId: kills[0].id });
-        else if (combo || P.mana >= P.maxMana - 1) add(combo ? 5 : 3, c, { unitId: [...theirs].sort((a, b) => hp6(a) - hp6(b))[0].id });
+        const kills = theirs.filter((u) => u.hp <= dmg).sort((a, b) => pri(b) - pri(a) || hp6(b) - hp6(a));
+        if (kills.length) add(12 + kills[0].maxHp / 4 + bonus(kills[0]), c, { unitId: kills[0].id });
+        else if (combo || P.mana >= P.maxMana - 1) add(combo ? 5 : 3, c, { unitId: [...theirs].sort((a, b) => pri(b) - pri(a) || hp6(a) - hp6(b))[0].id });
         break;
       }
       case 'chain': {
         if (theirs.length < 2) break;
-        const under = theirs.filter((u) => u.hp <= def.chainDamage[0]).sort((a, b) => hp6(b) - hp6(a));
-        const first = under[0] || [...theirs].sort((a, b) => hp6(a) - hp6(b))[0];
-        add(7 + (theirs.length >= 3 ? 3 : 0) + (under.length ? 2 : 0), c, { unitId: first.id });
+        const under = theirs.filter((u) => u.hp <= def.chainDamage[0]).sort((a, b) => pri(b) - pri(a) || hp6(b) - hp6(a));
+        const first = under[0] || [...theirs].sort((a, b) => pri(b) - pri(a) || hp6(a) - hp6(b))[0];
+        add(7 + (theirs.length >= 3 ? 3 : 0) + (under.length ? 2 : 0) + bonus(first), c, { unitId: first.id });
+        break;
+      }
+      case 'blizzard': {
+        // 적이 가장 많이 몰린 곳 (앞서는 상대의 유닛은 더 쳐준다)
+        let best = null;
+        for (const u of theirs) {
+          const hit = theirs.filter((x) => x === u || Math.hypot(x.x - u.x, x.y - u.y) <= def.radius + x.radius);
+          const sc = hit.length + hit.filter((x) => x.owner === lead).length * 0.5;
+          if (!best || sc > best.sc + 1e-9) best = { sc, u, n: hit.length };
+        }
+        if (best && best.n >= 2) add(4 + 3 * best.sc, c, { unitId: best.u.id });
+        break;
+      }
+      case 'decree': {
+        // 내 유닛이 둘 이상일 때, 가장 비싼 적 유닛을 지목한다 (앞서는 상대의 유닛을 먼저)
+        if (mine.length < 2 || !theirs.length) break;
+        if (P.decree && P.decree.until > t) break;
+        const target = [...theirs].sort((a, b) => pri(b) - pri(a) || value(b) - value(a) || hp6(b) - hp6(a))[0];
+        add(4 + mine.length + Math.min(4, value(target)) + bonus(target), c, { unitId: target.id });
         break;
       }
       case 'purify': {
@@ -106,8 +153,8 @@ function thinkSmart(state, p, rng, o) {
       case 'disrupt': {
         const best = theirs
           .filter((u) => u.ult && !u.telegraphing && u.gauge >= 50 && u.silenceUntil <= t)
-          .sort((a, b) => (b.ult.damage || 0) - (a.ult.damage || 0))[0];
-        if (best) add(5 + (best.ult.damage ? 4 : 0), c, { unitId: best.id });
+          .sort((a, b) => pri(b) - pri(a) || (b.ult.damage || 0) - (a.ult.damage || 0))[0];
+        if (best) add(5 + (best.ult.damage ? 4 : 0) + bonus(best), c, { unitId: best.id });
         break;
       }
       case 'retreat': {
@@ -149,7 +196,7 @@ function thinkSmart(state, p, rng, o) {
         break;
       case 'crystal': {
         const after = P.mana - k + def.amount;
-        const unlocks = P.hand.some((h) => h !== c && cost(h) > P.mana && cost(h) <= after && !CARDS[h.id].duelInert);
+        const unlocks = P.hand.some((h) => h !== c && cost(h) > P.mana && cost(h) <= after && !(CARDS[h.id].matchOnly && !state.stakes));
         if (unlocks) add(8, c, null);
         else if (k === 0 && P.hand.length > 1) add(4, c, null);
         break;
@@ -161,6 +208,10 @@ function thinkSmart(state, p, rng, o) {
       }
       case 'muster':
         if (P.hand.length <= r.handMax - 2 && P.deck.some((d) => CARDS[d.id].type === 'unit')) add(7, c, null);
+        break;
+      case 'invest':
+        // 한 경기 안의 전투에서만: 이기면 골드 +3. 일찍 낼수록 좋다
+        add(8 - t / 5000, c, null);
         break;
       case 'stockpile':
         if (t <= 25000) add(9 - t / 5000, c, null);
@@ -182,7 +233,7 @@ function thinkSmart(state, p, rng, o) {
   }
 
   if (P.hand.length && canRedraw(state, p).ok) {
-    const dud = P.hand.find((c) => CARDS[c.id].duelInert || CARDS[c.id].meleeOnly);
+    const dud = P.hand.find((c) => CARDS[c.id].matchOnly && !state.stakes);
     if (dud) return { type: 'redraw', uid: dud.uid };
     const saving = P.mana < P.maxMana && P.hand.some((c) => CARDS[c.id].type === 'unit' && cost(c) > P.mana && cost(c) <= P.maxMana);
     if (!saving) {

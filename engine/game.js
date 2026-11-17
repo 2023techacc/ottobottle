@@ -1,20 +1,13 @@
 // 한 경기(1:1 또는 8인): 사전 선택 → [상점 → 전투] 반복 → 한 명이 남으면 끝.
-// 여기에는 상점·경제·라운드 진행만 있고, 전투는 유닛 전투(field.js) 또는 예전 칸 전투(battle.js)가 맡는다.
+// 여기에는 상점·경제·라운드 진행만 있고, 전투는 유닛 전투(field.js)가 맡는다.
 // 난수는 상점에 무엇이 뜨는지에만 쓴다. 같은 시드와 같은 행동이면 결과도 같다.
 
 import { makeRng, hashSeed } from './rng.js';
 import { CARDS, COMMANDERS, POOL_CARD_IDS, COPIES_BY_TIER, BATTLEFIELD_IDS, UNIT_DIAMONDS } from './cards.js';
 import { SHOP_ODDS } from './decks.js';
-import { PRESETS, DEFAULT_RULES } from './rules.js';
-import { runBattle } from './match.js';
+import { DEFAULT_RULES } from './rules.js';
 import { runFieldBattle } from './fieldbot.js';
 import { FIELD_RULES } from './field.js';
-
-/** 경기에서 쓰는 전투 방식 */
-export const BATTLE_KINDS = Object.freeze({
-  field: '유닛 전투',
-  cells: '칸 전투 (예전)',
-});
 
 /** 게임 모드. 인원과 HP·픽 수가 다르다. */
 export const MODES = Object.freeze({
@@ -122,29 +115,23 @@ export function validatePicks(picks, econ = DEFAULT_ECON) {
  *   draft: 지휘관 고유 카드 1장만 들고 시작해서 draftPick으로 나머지를 고른다 (다 고르면 1라운드 상점이 열린다).
  *   commander: 지휘관마다 정해진 시작 덱 8장 (예전 방식)
  * @param {object} [cfg.econ]         DEFAULT_ECON에 덮어쓸 값
- * @param {'field'|'cells'} [cfg.battle]  전투 방식. 기본은 유닛 전투(field)
- * @param {object} [cfg.battleRules]  전투 규칙에 덮어쓸 값 (유닛 전투는 FIELD_RULES, 칸 전투는 PRESETS.cards 위에)
+ * @param {object} [cfg.battleRules]  전투 규칙(FIELD_RULES)에 덮어쓸 값
  */
 export function createGame(cfg) {
   const mode = cfg.mode || (cfg.players.length === 2 ? 'duel' : 'rank8');
   const econ = { ...DEFAULT_ECON, ...MODES[mode].econ, ...(cfg.econ || {}) };
   const seed = (cfg.seed ?? 1) >>> 0;
-  const battle = cfg.battle || 'field';
-  if (!BATTLE_KINDS[battle]) throw new Error(`모르는 전투 방식: ${battle}`);
   const game = {
     seed,
     mode,
-    battle,
     startDecks: cfg.startDecks || 'draft',
     econ,
     groups: [], // 이번 라운드의 조 편성 (상점 단계에서 미리 공개)
     eliminated: [], // 탈락한 순서
     placements: [], // 경기가 끝나면 1위부터
     // 한 경기에서는 선봉이 없고, 고르는 시작 카드 장수는 상점 레벨이 정한다.
-    // 유닛 전투는 FIELD_RULES가 기본이라 덮어쓸 값만 둔다.
-    battleRules: battle === 'field'
-      ? { ...(cfg.battleRules || {}), vanguardSlots: 0, openingPicks: 0 }
-      : { ...PRESETS.cards.rules, ...(cfg.battleRules || {}), vanguardSlots: 0, openingPicks: 0 },
+    // FIELD_RULES가 기본이라 덮어쓸 값만 둔다. 고르는 시작 카드 장수는 상점 레벨이 정한다.
+    battleRules: { ...(cfg.battleRules || {}), openingPicks: 0 },
     round: 0,
     phase: 'shop', // 'draft' | 'shop' | 'over'
     pool: {},
@@ -222,7 +209,7 @@ function newCard(game, id, origin) {
 
 /** 이 경기의 전투에 실제로 적용되는 규칙 전체 (카드 수치를 보여 줄 때 쓴다) */
 export function fullBattleRules(game) {
-  return { ...DEFAULT_RULES, ...(game.battle === 'field' ? FIELD_RULES : {}), ...game.battleRules };
+  return { ...DEFAULT_RULES, ...FIELD_RULES, ...game.battleRules };
 }
 
 export function aliveCount(game) {
@@ -632,22 +619,16 @@ function ghostConfig(game, q) {
  *   kind: 'practice' | 'boss' | 'duel' | 'melee4' | 'alliance'
  *   sides: 전투의 자리마다 플레이어 번호. 유령·중립 몬스터·보스 자리는 null.
  *   ghosts: 자리마다 복제한 플레이어 번호 (유령이 아니면 null)
- *   engine: 'field' | 'cells' (경기의 전투 방식)
- * 봇끼리 돌릴 때는 runRoundBattle(b)에 넘긴다. 직접 띄울 때 cfg는 유닛 전투면 Field.createField,
- * 칸 전투면 createBattle에 그대로 넘기면 된다. 연합전은 앞의 두 자리와 뒤의 두 자리가 한 팀이다.
+ * 봇끼리 돌릴 때는 runRoundBattle(b)에 넘기고, 직접 띄울 때는 cfg를 Field.createField에 그대로 넘긴다.
+ * 연합전은 앞의 두 자리와 뒤의 두 자리가 한 팀이다.
  */
-export function roundBattles(game) {
-  return roundBattlesRaw(game).map((b) => ({ ...b, engine: game.battle }));
-}
-
-/** roundBattles의 전투 하나를 봇끼리 끝까지 돌린다. { state, result, rejected } */
 export function runRoundBattle(b) {
-  return b.engine === 'cells' ? runBattle(b.cfg) : runFieldBattle(b.cfg);
+  return runFieldBattle(b.cfg);
 }
 
-function roundBattlesRaw(game) {
+export function roundBattles(game) {
   const info = roundInfo(game);
-  const base = { battlefield: info.battlefield, rules: game.battleRules };
+  const base = { battlefield: info.battlefield, rules: game.battleRules, stakes: true };
   return game.groups.map((group, gi) => {
     const first = group[0].p;
     if (info.format === 'practice') {

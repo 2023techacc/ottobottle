@@ -1,25 +1,7 @@
-// 시뮬레이션 공용 도구: 한 판 설정 만들기, 집계, CSV 쓰기
+// 시뮬레이션 공용 도구: 집계, CSV 쓰기
 
 import fs from 'node:fs';
 import path from 'node:path';
-import * as E from '../engine/index.js';
-
-/** 무작위 지휘관 둘과 중반 덱 둘, 전장 하나를 고른다. 시드가 같으면 같은 대진이 나온다. */
-export function randomMatch(seed, opts = {}) {
-  const rng = E.makeRng(E.hashSeed(seed, 'match'));
-  const c0 = rng.pick(E.COMMANDER_IDS);
-  const c1 = rng.pick(E.COMMANDER_IDS);
-  const battlefield = opts.battlefields === false ? null : rng.pick([null, ...E.BATTLEFIELD_IDS]);
-  return {
-    seed,
-    battlefield,
-    rules: opts.rules,
-    players: [
-      { commander: c0, deck: E.randomMidDeck(c0, rng), bot: opts.bot },
-      { commander: c1, deck: E.randomMidDeck(c1, rng), bot: opts.bot },
-    ],
-  };
-}
 
 /** 승 1, 무 0.5, 패 0 */
 export function score(result, p) {

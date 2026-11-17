@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// 유닛 소환 전투(실험)를 봇끼리 돌려 전투 흐름을 본다.
+// 유닛 소환 전투를 봇끼리 돌려 전투 흐름을 본다.
 //
 //   node sim/field.mjs                       결투 2000판
-//   node sim/field.mjs --format melee4       형식: duel, melee4(중앙 점령), alliance, all
+//   node sim/field.mjs --format melee4       형식: duel, melee4(중앙 점령), alliance, ffa(대난투), all(대난투 빼고 셋)
+//   node sim/field.mjs --format ffa --players 10 --games 200    대난투는 한 판이 1초쯤 걸린다
 //   node sim/field.mjs --games 5000
 //   node sim/field.mjs --rules "{\"commanderHp\":30}"
 //
@@ -18,12 +19,13 @@ const GAMES = Number(args.games || 2000);
 const SEED = Number(args.seed || 1);
 const RULES = args.rules ? JSON.parse(args.rules) : {};
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));
-const SEATS = { duel: 2, melee4: 4, alliance: 4 };
-const NAMES = { duel: '결투 (1:1)', melee4: '난투장 (4인 · 중앙 점령)', alliance: '연합전 (2:2)' };
-const FORMATS = !args.format || args.format === true ? ['duel'] : args.format === 'all' ? Object.keys(SEATS) : String(args.format).split(',');
+const FFA_N = Number(args.players || 8);
+const SEATS = { duel: 2, melee4: 4, alliance: 4, ffa: FFA_N };
+const NAMES = { duel: '결투 (1:1)', melee4: '난투장 (4인 · 중앙 점령)', alliance: '연합전 (2:2)', ffa: `대난투 (${FFA_N}인)` };
+const FORMATS = !args.format || args.format === true ? ['duel'] : args.format === 'all' ? ['duel', 'melee4', 'alliance'] : String(args.format).split(',');
 for (const f of FORMATS) {
   if (!SEATS[f]) {
-    console.error(`모르는 형식: ${f} (duel, melee4, alliance, all 중 하나)`);
+    console.error(`모르는 형식: ${f} (duel, melee4, alliance, ffa, all 중 하나)`);
     process.exit(1);
   }
 }
@@ -48,6 +50,9 @@ function runFormat(format) {
   const seats = new Array(n).fill(0);
   let walked = 0;
   let peakUnits = 0;
+  let avgUnits = 0;
+  let eliminated = 0;
+  let lastOne = 0;
   let fair = 0;
   let noWinner = 0;
   const cap = { early: 0, first: 0, second: 0, inZone: 0, ticks: 0, lead: 0 };
@@ -57,11 +62,15 @@ function runFormat(format) {
     const cs = Array.from({ length: n }, () => rng.pick(E.COMMANDER_IDS));
     const decks = cs.map((c) => E.randomMidDeck(c, rng));
     let peak = 0;
+    let unitSum = 0;
+    let unitTicks = 0;
     const { state } = E.runFieldBattle({
       seed, format, rules: RULES, battlefield: rng.pick([null, ...E.BATTLEFIELD_IDS]),
       players: cs.map((commander, p) => ({ commander, deck: decks[p] })),
       onTick: (s) => {
         if (s.units.length > peak) peak = s.units.length;
+        unitSum += s.units.length;
+        unitTicks++;
         if (s.capture) {
           cap.inZone += s.capture.counts.reduce((a, b) => a + b, 0);
           cap.ticks++;
@@ -77,6 +86,9 @@ function runFormat(format) {
       cap.second += sc[1];
     }
     peakUnits += peak;
+    avgUnits += unitSum / Math.max(1, unitTicks);
+    eliminated += state.players.filter((P) => P.dead).length;
+    if (state.players.filter((P) => !P.dead).length === 1) lastOne++;
     fair = 1 / new Set(state.players.map((P) => P.team)).size;
     for (let p = 0; p < n; p++) {
       const s = teamScore(state, p);
@@ -94,7 +106,8 @@ function runFormat(format) {
   const overall = {
     형식: NAMES[format], 판수: s.games, 길이_p10: s.len_p10, 길이_중앙값: s.len_median, 길이_p90: s.len_p90,
     과열_도달: s.overtime_pct, 시간초과: s.timeout_pct, 승자_없음: pct(noWinner / GAMES),
-    낸_카드: s.cards_played, 걸은_거리: round(walked / (GAMES * n), 1), 필드_유닛_최대: round(peakUnits / GAMES, 1),
+    낸_카드: s.cards_played, 걸은_거리: round(walked / (GAMES * n), 1), 필드_유닛_최대: round(peakUnits / GAMES, 1), 필드_유닛_평균: round(avgUnits / GAMES, 1),
+    탈락_인원: round(eliminated / GAMES, 1), 한_명만_남은_판: pct(lastOne / GAMES),
     평균_손패: s.hand_avg, 손패_가득: s.hand_full_pct, 끝날때_최대마나: s.max_mana_end,
   };
   console.log(`\n━━ 유닛 소환 전투 · ${NAMES[format]} (${GAMES}판, 무작위 중반 덱) ━━`);

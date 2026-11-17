@@ -3,22 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>카드 오토배틀러 (가제) — 유닛 전투 (실험)</title>
+  <title>카드 오토배틀러 (가제) — 전투 한 판</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main id="app">
     <nav class="modetabs" id="tabs">
-      <a class="tablink" href="index.html">← 한 경기 / 전투 한 판</a>
-      <span class="tablink on">유닛 전투 (실험)</span>
+      <a class="tablink" href="index.html">한 경기 (상점 포함)</a>
+      <span class="tablink on">전투 한 판</span>
     </nav>
 
     <!-- ── 설정 ── -->
     <section id="fsetup">
-      <h1>카드 오토배틀러 <small>(가제) · 유닛 소환 전투 시제품</small></h1>
+      <h1>카드 오토배틀러 <small>(가제) · 전투 한 판</small></h1>
       <p class="lead">칸은 배치할 때만 쓴다. 내 본진 앞의 칸에 유닛을 놓으면, 그 뒤로는 칸과 상관없이 가장 가까운 적에게 걸어가 사거리 안에서 싸운다.
         유닛끼리는 겹치지 않고 서로 밀어낸다. 덱·손패·마나·카드는 그대로다. 여기서는 전투 한 판만 하고, 상점과 8인 경기는 <a href="index.html">한 경기</a>에서 이 전투로 치른다.<br>
-        결투와 연합전은 상대 지휘관(본진)을 쓰러뜨리면 이긴다. <b>난투장은 본진을 치지 않는다.</b> 한가운데 원 안에 유닛이 가장 많은 사람과 적 유닛을 쓰러뜨린 사람(원 안이면 두 배)이 점수를 얻고, 점수로 순위를 정한다.</p>
+        결투와 연합전은 상대 지휘관(본진)을 쓰러뜨리면 이긴다. <b>난투장은 본진을 치지 않는다.</b> 한가운데 원 안에 유닛이 가장 많은 사람과 적 유닛을 쓰러뜨린 사람(원 안이면 두 배)이 점수를 얻고, 점수로 순위를 정한다.
+        <b>대난투</b>는 3~12명이 큰 원형 필드에서 각자 싸운다. 유닛 카드 한 장에 같은 유닛이 3기씩 나오고, 마지막까지 지휘관이 남은 사람이 이긴다 (시간이 다 되면 먼저 쓰러진 순서와 지휘관 체력으로 순위).</p>
       <div class="setup-grid">
         <fieldset>
           <legend>나</legend>
@@ -48,6 +49,7 @@
         <fieldset>
           <legend>전투</legend>
           <label>형식 <select id="format"></select></label>
+          <div id="ffaCountRow" hidden><label>인원 <select id="ffaCount"></select></label></div>
           <label>전장 <select id="battlefield"></select></label>
           <label>시드 <input id="seed" type="number" min="1" step="1"></label>
           <div class="row">
