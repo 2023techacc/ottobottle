@@ -1,21 +1,80 @@
 // 상점 봇: 카드마다 가치 점수를 매기고, 골드·덱 장수·유닛 비율을 보며 사고 빼고 합친다.
-// 수치는 일단 돌아가게 하는 임시값이다. 밸런스를 볼 때 다시 손본다.
+// 첩보원 봇은 상대가 고른 시작 카드를 보고, 내 시작 카드 후보들을 미리 몇 판씩 돌려 본 뒤 고른다.
 
-import { CARDS, POOL_CARD_IDS, UNIT_DIAMONDS } from './cards.js';
+import { CARDS, COMMANDERS, POOL_CARD_IDS, UNIT_DIAMONDS } from './cards.js';
 import { pickOpening } from './decks.js';
 import {
   buy, reroll, buyXp, removeCard, upgrade, fuse, setOpening, upgradable, canFuse, openingCount, rerollCostOf,
-  claimReward, skipReward, draftPick,
+  claimReward, skipReward, draftPick, roundBattles,
 } from './game.js';
+import { hashSeed } from './rng.js';
+import { runFieldBattle } from './fieldbot.js';
+import { PERSONAS, likeOf } from './personas.js';
 
-/** 카드 가치 (대략 0~10) */
+/** 시작 카드 후보를 만드는 방법들 (decks.js의 pickOpening) */
+export const OPENING_POLICIES = ['tempo', 'cheap', 'big', 'curve', 'ops'];
+
+/**
+ * 상점 봇을 돌리는 순서: 첩보원을 맨 뒤에 둔다.
+ * 첩보원 봇이 다른 사람들이 이번 라운드에 고른 시작 카드를 보고 고를 수 있게 한다 (사람 첩보원도 상점에서 그것을 본다).
+ */
+export function shopBotOrder(game) {
+  const spy = (P) => (COMMANDERS[P.commander].seesOpening ? 1 : 0);
+  return [...game.players].sort((A, B) => spy(A) - spy(B) || A.idx - B.idx).map((P) => P.idx);
+}
+
+/** 이 전투에서 자리 i의 점수 (이기면 1, 지면 0. 난투장은 순위에 따라) */
+function battleScore(state, i) {
+  const r = state.result;
+  if (state.format === 'alliance') return r.winnerTeam === -1 ? 0.5 : r.winnerTeam === state.players[i].team ? 1 : 0;
+  const n = state.players.length;
+  if (n > 2) return (n - 1 - r.ranks[i]) / (n - 1);
+  return r.winner === -1 ? 0.5 : r.winner === i ? 1 : 0;
+}
+
+/**
+ * 첩보원의 시작 카드: 이번 라운드 상대들의 공개된 덱과 이미 고른 시작 카드로 후보마다 sims판씩 돌려 보고,
+ * 가장 많이 이긴 후보를 고른다. 연습·보스 라운드나 고를 장수가 없으면 null.
+ * 비슷하게 잘하면 기본(tempo)을 고른다.
+ */
+export function spyOpening(game, p, sims = 6) {
+  const P = game.players[p];
+  const n = openingCount(game, p);
+  if (n <= 0) return null;
+  const battle = roundBattles(game).find((b) => b.sides.includes(p));
+  if (!battle || battle.kind === 'practice' || battle.kind === 'boss') return null;
+  const seat = battle.sides.indexOf(p);
+  const deck = P.deck.map((c) => ({ id: c.id, stars: c.stars, fuse: c.fuse }));
+  const startMana = game.battleRules.startMana ?? 3;
+  const seen = new Set();
+  let best = null;
+  for (const policy of OPENING_POLICIES) {
+    const picks = pickOpening(deck, n, policy, null, startMana);
+    const key = [...picks].sort((a, b) => a - b).join(',');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let score = 0;
+    for (let k = 0; k < sims; k++) {
+      const players = battle.cfg.players.map((pc, i) => (i === seat ? { ...pc, opening: picks } : pc));
+      const { state } = runFieldBattle({ ...battle.cfg, players, seed: hashSeed(battle.cfg.seed, 'spy', game.round, k) });
+      score += battleScore(state, seat);
+    }
+    if (!best || score > best.score + 0.5) best = { score, picks };
+  }
+  return best.picks;
+}
+
+/**
+ * 카드 가치 (대략 0~10). 2026-11-18 밸런스 조정 뒤 sim/fieldswap.mjs로 잰 지수(세 형식 평균)에서 정했다:
+ * 가치 ≈ (지수 − 60) ÷ 4. 지휘관 고유 카드는 상점에 뜨지 않아서 대략 값이다.
+ */
 export const CARD_VALUE = {
-  shield: 6, rats: 4, bat: 5, archer: 5, dagger: 8, frostwitch: 6, lancer: 8, pyro: 8, colossus: 5,
-  turtle: 5, banner: 5, bomber: 5, hammer: 6,
-  firebolt: 6, retreat: 4, purify: 2, chain: 5, blizzard: 5,
-  warcry: 4, awaken: 2, armor: 4, phalanx: 2,
-  scout: 5, crystal: 5, supply: 3, muster: 3, stockpile: 3,
-  invest: 3, catalyst: 2, disrupt: 5, decree: 4,
+  shield: 7, rats: 9, bat: 7, archer: 5, dagger: 5, frostwitch: 4, lancer: 6, pyro: 9, colossus: 5,
+  turtle: 5, banner: 6, bomber: 4, hammer: 6,
+  firebolt: 6, retreat: 6, purify: 4, chain: 5, blizzard: 4,
+  warcry: 5, awaken: 7, armor: 5, phalanx: 3,
+  scout: 9, crystal: 5, supply: 8, muster: 4, stockpile: 5,
+  invest: 4, catalyst: 3, disrupt: 5, decree: 4,
 };
 
 /** 성향: 저축형은 이자를 챙기고, 소비형은 바로 쓴다 */
@@ -26,10 +85,11 @@ export const SHOP_STYLES = {
 };
 
 /** 사전 선택: 가치가 높은 카드 위주로 8종 (약간의 무작위) */
-export function botPicks(rng, econ) {
+export function botPicks(rng, econ, persona = null) {
   const n = econ ? econ.picks : 8;
   const maxT5 = econ ? econ.maxTier5Picks : 1;
-  const scored = POOL_CARD_IDS.map((id) => ({ id, s: (CARD_VALUE[id] || 3) + rng() * 4 })).sort((a, b) => b.s - a.s);
+  // 성격이 좋아하는 카드는 더 고른다
+  const scored = POOL_CARD_IDS.map((id) => ({ id, s: (CARD_VALUE[id] || 3) + likeOf(persona, id) + rng() * 4 })).sort((a, b) => b.s - a.s);
   const out = [];
   let t5 = 0;
   for (const { id } of scored) {
@@ -46,6 +106,7 @@ export function botPicks(rng, econ) {
 /** 시작 덱 드래프트를 끝까지 고른다: 가치가 높은 카드 위주로, 유닛이 모자라면 유닛을 먼저 */
 export function runDraftBot(game, p) {
   const P = game.players[p];
+  const persona = P.persona;
   for (let guard = 0; guard < 60 && game.phase === 'draft' && P.draft && P.draft.left > 0; guard++) {
     const units = P.deck.filter((c) => CARDS[c.id].type === 'unit').length;
     const big = P.deck.filter((c) => CARDS[c.id].cost >= 4).length;
@@ -53,7 +114,7 @@ export function runDraftBot(game, p) {
     let bestScore = -Infinity;
     P.draft.options.forEach((id, i) => {
       const def = CARDS[id];
-      let score = CARD_VALUE[id] ?? 3;
+      let score = (CARD_VALUE[id] ?? 3) + likeOf(persona, id);
       if (def.type === 'unit' && units < 5) score += 3;
       if (def.type !== 'unit' && P.deck.length - units >= 3) score -= 3;
       if (def.cost >= 4 && big >= 1) score -= 3;
@@ -82,12 +143,14 @@ export function runShopBot(game, p, opts = {}) {
   const P = game.players[p];
   if (!P.alive || game.phase !== 'shop') return;
   const e = game.econ;
-  const style = SHOP_STYLES[opts.style || 'balanced'];
+  const persona = P.persona;
+  // 상점 성향: 따로 주지 않으면 성격의 성향, 그것도 없으면 균형형
+  const style = SHOP_STYLES[opts.style || (persona && PERSONAS[persona].shop) || 'balanced'];
 
   // 보스 보상: 가치가 가장 높은 카드를 받는다
   if (P.reward) {
     const best = P.reward.options
-      .map((id, i) => ({ i, v: game.pool[id] > 0 ? (CARD_VALUE[id] ?? 3) : -1 }))
+      .map((id, i) => ({ i, v: game.pool[id] > 0 ? (CARD_VALUE[id] ?? 3) + likeOf(persona, id) : -1 }))
       .sort((a, b) => b.v - a.v)[0];
     if (!best || best.v < 0 || !claimReward(game, p, best.i).ok) skipReward(game, p);
   }
@@ -97,7 +160,7 @@ export function runShopBot(game, p, opts = {}) {
 
   const scoreSlot = (s) => {
     const def = CARDS[s.id];
-    let score = CARD_VALUE[s.id] ?? 3;
+    let score = (CARD_VALUE[s.id] ?? 3) + likeOf(persona, s.id);
     const same = P.deck.filter((c) => c.id === s.id && c.stars === 1).length;
     if (same === 1) score += 2;
     if (same >= 2) score += 5; // 3장이 되면 강화
@@ -141,11 +204,11 @@ export function runShopBot(game, p, opts = {}) {
     if (worst && valueOf(worst) <= 2) removeCard(game, p, worst.key);
   }
 
-  // 융합: 남는 싼 재료 하나를 가장 좋은 유닛에 붙인다
-  if (P.fusionsLeft > 0 && P.deck.length >= e.deckMin + 3) {
+  // 융합: 남는 재료 하나를 가장 좋은 유닛에 붙인다. 강화(3장)를 노리는 2장짜리 카드는 재료로 쓰지 않는다.
+  if (P.fusionsLeft > 0 && P.deck.length >= e.deckMin + 2) {
     const materials = P.deck
-      .filter((c) => CARDS[c.id].diamond && !c.fuse && c.stars === 1 && valueOf(c) <= 5)
-      .filter((c) => P.deck.filter((x) => x.id === c.id && x.stars === 1).length === 1)
+      .filter((c) => CARDS[c.id].diamond && !c.fuse && c.stars === 1 && valueOf(c) <= 7)
+      .filter((c) => P.deck.filter((x) => x.id === c.id && x.stars === 1).length !== 2)
       .sort((a, b) => valueOf(a) - valueOf(b));
     const bodies = [...P.deck].filter((c) => CARDS[c.id].type === 'unit' && !c.fuse).sort((a, b) => valueOf(b) - valueOf(a));
     outer: for (const mat of materials) {
@@ -162,8 +225,13 @@ export function runShopBot(game, p, opts = {}) {
 
   for (const u of upgradable(game, p)) upgrade(game, p, u.id, u.stars);
 
-  // 시작 카드 고르기
+  // 시작 카드 고르기. spyInfo: true면 첩보원은 상대가 고른 시작 카드를 보고 미리 돌려 본다.
+  // 경기 결과가 오차 안에서만 달라지고 시간이 6~7배 들어서 기본은 끈다 (README "첩보원 봇").
   const deck = P.deck.map((c) => ({ id: c.id, stars: c.stars, fuse: c.fuse }));
-  const picks = pickOpening(deck, openingCount(game, p), opts.openingPolicy || 'tempo', null, game.battleRules.startMana ?? 3);
+  let picks = pickOpening(deck, openingCount(game, p), opts.openingPolicy || 'tempo', null, game.battleRules.startMana ?? 3);
   setOpening(game, p, picks.map((i) => P.deck[i].key));
+  if (COMMANDERS[P.commander].seesOpening && opts.spyInfo === true) {
+    picks = spyOpening(game, p, opts.spySims ?? 6) || picks;
+    setOpening(game, p, picks.map((i) => P.deck[i].key));
+  }
 }

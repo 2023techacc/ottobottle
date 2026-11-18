@@ -272,7 +272,7 @@ export function createFieldView(root, opts = {}) {
     if (u.defId === 'boss') return `${u.name} · 공 ${fmt(F.currentAtk(state, u))} · 받은 피해 ${fmt(u.damageTaken || 0)} · ${F.fieldText('boss')}`;
     const tags = [u.ranged ? `사거리 ${u.range}` : '근접', ...u.keywords.map((k) => E.KEYWORD_NAMES[k] || k)];
     if (u.slows.length) tags.push(`감속×${u.slows.length}`);
-    if (u.silenceUntil > state.timeMs) tags.push('침묵');
+    if (u.stunUntil > state.timeMs) tags.push('기절');
     for (const b of u.buffs) tags.push(b.kind === 'atk' ? `공+${fmt(b.amount)}` : '갑옷');
     if (u.tripleShot) tags.push('3연사 준비');
     return `${u.name} · 공 ${fmt(F.currentAtk(state, u))} · 체 ${fmt(Math.max(0, u.hp))}/${fmt(u.maxHp)} · ${tags.join(', ')}`;

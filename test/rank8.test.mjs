@@ -146,7 +146,7 @@ test('8인 기본 피해는 3에서 라운드마다 +1 (최대 20), 남은 유�
 });
 
 
-test('난투장 피해: 1위 0%, 2위 30%, 3위 70%, 4위 100%. 군주는 난전에서 30% 덜 받는다', () => {
+test('난투장 피해: 1위 0%, 2위 30%, 3위 70%, 4위 100%. 군주는 8인 경기에서 25% 덜 받는다', () => {
   const g = mk(8, { commanders: ['lord', 'lord', 'lord', 'lord', 'lord', 'lord', 'lord', 'lord'] });
   const h = mk();
   for (const game of [g, h]) advanceTo(game, 10);
@@ -158,7 +158,7 @@ test('난투장 피해: 1위 0%, 2위 30%, 3위 70%, 4위 100%. 군주는 난전
   const sg = fake(g, res);
   const dmg = (s, group, rank) => s.results.find((x) => x.group === group && x.rank === rank).damage;
   assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sh, 0, k)), [0, 0.3, 0.7, 1].map((x) => Math.ceil(full * x)));
-  assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sg, 0, k)), [0, 0.3, 0.7, 1].map((x) => Math.ceil(Math.ceil(full * x) * 0.7)), '군주: 올림(피해 × 0.7)');
+  assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sg, 0, k)), [0, 0.3, 0.7, 1].map((x) => Math.ceil(Math.ceil(full * x) * 0.75)), '군주: 올림(피해 × 0.75)');
 });
 
 test('연합전 피해: 진 팀의 두 명이 각자 결투 피해의 절반을 받는다', () => {

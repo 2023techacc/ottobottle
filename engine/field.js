@@ -245,10 +245,11 @@ export function createField(cfg) {
       hp: rules.commanderHp,
       maxHp: rules.commanderHp,
       capMs: 0, // 난투장 점수 (1000이 1점) = 원을 차지한 시간 + 처치 점수
-      mana: rules.startMana + (bonus.startMana || 0),
+      mana: rules.startMana + (bonus.startMana || 0) + (COMMANDERS[pc.commander].startMana || 0), // 첩보원은 마나 +1
       maxMana: rules.startMaxMana + (bonus.maxMana || 0),
       maxManaBonus: bonus.maxMana || 0,
       manaTimer: 0,
+      manaRate: 0, // 비축: 마나 회복 속도 보너스
       drawTimer: 0,
       redrawReadyAt: 0,
       deck: [],
@@ -258,7 +259,6 @@ export function createField(cfg) {
       lastPlayAt: -Infinity,
       lastPlayed: null,
       unitDiscount: { count: 0, amount: 0 },
-      phalanxUntil: 0,
       decree: null, // 포고: { unitId, until, amount } 이 유닛을 내 유닛 전체가 먼저 노린다
       invested: false,
       openingCards: [],
@@ -279,7 +279,7 @@ export function createField(cfg) {
   cfg.players.forEach((pc, idx) => {
     const P = state.players[idx];
     const bonus = pc.bonus || {};
-    const startHand = Math.min(rules.handMax, rules.startHand + (bonus.startHand || 0));
+    const startHand = Math.min(rules.handMax, rules.startHand + (bonus.startHand || 0) + (COMMANDERS[pc.commander].startHand || 0));
     P.rng.shuffle(P.deck);
     const maxPicks = Math.min(startHand, rules.openingPicks + (bonus.openingPicks || 0));
     const picked = [...new Set(pc.opening || [])].slice(0, maxPicks).map((i) => P.deck.find((c) => c.order === i)).filter(Boolean);
@@ -414,7 +414,9 @@ export function chooseTarget(state, u) {
       // 몸집이 큰 표적은 그만큼 멀리서도 닿는다
       const d = distance(u, x);
       const reach = u.range + x.radius - 0.45;
-      if (cap && q6(d) > q6(Math.max(reach, state.rules.captureAggro)) && !(assassin && x.ranged)) continue;
+      // 난투장에서는 가까이 온 적만 상대한다. 암살 유닛은 원거리 유닛을 두 배 거리까지 쫓는다 (그보다 멀리 가서 원을 비우지는 않는다)
+      const aggro = state.rules.captureAggro * (assassin && x.ranged ? 2 : 1);
+      if (cap && q6(d) > q6(Math.max(reach, aggro))) continue;
       cands.push({ unit: x, x: x.x, y: x.y, d, reach, prio: 1, turn, id: x.id });
     }
   }
@@ -424,14 +426,14 @@ export function chooseTarget(state, u) {
     const reach = cap.radius * state.rules.captureHold;
     return { zone: true, x: cap.x, y: cap.y, d, reach, inRange: q6(d) <= q6(reach) };
   }
-  // 포고: 지목한 유닛이 살아 있으면 거리와 상관없이 그 유닛부터
+  // 포고: 지목한 유닛이 사거리 안에 있으면 그 유닛부터 (쫓아가지는 않는다)
   const dec = state.players[u.owner].decree;
   if (dec && dec.until > state.timeMs) {
     const marked = state.units.find((x) => x.id === dec.unitId && !x.dying && targetable(state, x) && isEnemy(state, u.owner, x.owner));
     if (marked) {
       const d = distance(u, marked);
       const reach = u.range + marked.radius - 0.45;
-      return { unit: marked, x: marked.x, y: marked.y, d, reach, prio: 0, turn: 0, id: marked.id, inRange: q6(d) <= q6(reach) };
+      if (q6(d) <= q6(reach)) return { unit: marked, x: marked.x, y: marked.y, d, reach, prio: 0, turn: 0, id: marked.id, inRange: true };
     }
   }
   const current = cands.find((c) => c.unit && c.unit.id === u.targetId);
@@ -459,7 +461,7 @@ export function summonUnit(state, owner, x, y, c) {
   // 전열·후열이 없어서, 전열 효과는 근접 유닛에 적용한다
   let hpMult = 1;
   if (!def.ranged) {
-    if (state.players[owner].commander === 'general') hpMult += 0.1;
+    hpMult += COMMANDERS[state.players[owner].commander].meleeHp || 0; // 장군
     if (state.battlefield === 'citadel') hpMult += 0.2;
   }
   const keywords = [...def.keywords];
@@ -496,8 +498,8 @@ export function summonUnit(state, owner, x, y, c) {
     moving: false,
     buffs: [],
     slows: [],
-    silenceUntil: 0,
-    ccLast: { slow: -Infinity, silence: -Infinity },
+    stunUntil: 0,
+    ccLast: { slow: -Infinity, stun: -Infinity },
     tripleShot: false,
     telegraphing: false,
     dying: false,
@@ -534,8 +536,8 @@ function summonToken(state, parent, x, y) {
     moving: false,
     buffs: [],
     slows: [],
-    silenceUntil: 0,
-    ccLast: { slow: -Infinity, silence: -Infinity },
+    stunUntil: 0,
+    ccLast: { slow: -Infinity, stun: -Infinity },
     tripleShot: false,
     telegraphing: false,
     dying: false,
@@ -561,8 +563,6 @@ function emit(state, ev) {
 function dealDamage(state, target, amount, opts = {}) {
   if (!target || target.dying || amount <= 0) return 0;
   const r = state.rules;
-  // 방진: 내 원거리 유닛이 받는 범위 피해 감소
-  if (opts.aoe && target.ranged && state.players[target.owner].phalanxUntil > state.timeMs) amount *= 0.5;
   if (opts.source && !opts.guarded) {
     const dec = state.players[opts.source.owner].decree;
     if (dec && dec.unitId === target.id && dec.until > state.timeMs) amount *= 1 + dec.amount;
@@ -587,7 +587,7 @@ function dealDamage(state, target, amount, opts = {}) {
     if (!target.hitters || target.hitters.t !== state.timeMs) target.hitters = { t: state.timeMs, owners: [] };
     if (!target.hitters.owners.includes(opts.source.owner)) target.hitters.owners.push(opts.source.owner);
   }
-  if (target.ult && !target.telegraphing && state.timeMs >= target.silenceUntil) gainGauge(state, target, target.ult.gaugeHit);
+  if (target.ult && !target.telegraphing) gainGauge(state, target, target.ult.gaugeHit);
   emit(state, { type: 'damage', p: target.owner, unitId: target.id, x: target.x, y: target.y, amount, guarded: !!opts.guarded, aoe: !!opts.aoe });
   // 같은 순간에 일어나는 공격들 사이에서는 죽음을 바로 확정하지 않는다 (먼저 처리된 쪽이 유리해지지 않게).
   if (target.hp <= EPS && !state.deferDeaths) target.dying = true;
@@ -612,7 +612,6 @@ function damageCommander(state, p, amount, source) {
 
 function gainGauge(state, u, amount) {
   if (!u.ult || !amount || u.telegraphing) return;
-  if (state.timeMs < u.silenceUntil) return;
   if (state.battlefield === 'surge') amount *= 1.5;
   u.gauge = Math.min(state.rules.gaugeMax, u.gauge + amount);
 }
@@ -642,13 +641,6 @@ function applySlow(state, u) {
   }
 }
 
-function applySilence(state, u, baseMs) {
-  if (u.dying) return;
-  const dur = ccDuration(state, u, 'silence', Math.min(state.rules.silenceMaxMs, baseMs));
-  u.silenceUntil = Math.max(u.silenceUntil, state.timeMs + dur);
-  emit(state, { type: 'silence', p: u.owner, unitId: u.id, durationMs: dur });
-}
-
 // ─────────────────────────────────────────────────────────────
 // 덱·손패
 // ─────────────────────────────────────────────────────────────
@@ -675,7 +667,7 @@ function tickPlayer(state, P, dt) {
   const r = state.rules;
   const t = state.timeMs;
   P.maxMana = Math.min(r.maxManaCap, r.startMaxMana + Math.floor(t / r.maxManaIntervalMs)) + P.maxManaBonus;
-  P.manaTimer += dt;
+  P.manaTimer += dt * (1 + P.manaRate);
   while (P.manaTimer >= r.manaIntervalMs) {
     P.manaTimer -= r.manaIntervalMs;
     if (P.mana < P.maxMana) P.mana++;
@@ -722,7 +714,7 @@ export function step(state) {
   // 이번 틱의 표적을 모두 먼저 정한다 (처리 순서에 따라 유불리가 생기지 않게)
   const plans = [];
   for (const u of state.units) {
-    if (u.dying) continue;
+    if (u.dying || t < u.stunUntil) continue; // 기절한 유닛은 표적도 잡지 않는다
     const tg = chooseTarget(state, u);
     u.targetId = tg && tg.unit ? tg.unit.id : null;
     plans.push({ u, tg });
@@ -1317,6 +1309,7 @@ function doPlay(state, p, uid, target) {
           }
         }
         u.buffs = [];
+        dealDamage(state, u, def.damage * sc, { source: { owner: p } });
         break;
       }
       case 'chain': {
@@ -1338,6 +1331,7 @@ function doPlay(state, p, uid, target) {
       case 'awaken': {
         const u = findUnit(state, target.unitId);
         if (!u.telegraphing) u.gauge = Math.min(r.gaugeMax, u.gauge + def.amount * sc);
+        if (def.atk) u.buffs.push({ kind: 'atk', amount: def.atk * sc });
         break;
       }
       case 'armor': {
@@ -1349,7 +1343,14 @@ function doPlay(state, p, uid, target) {
         break;
       }
       case 'phalanx':
-        P.phalanxUntil = Math.max(P.phalanxUntil, t + def.durationMs * sc);
+        // 내 근접 유닛 전체에 갑옷 (정화로 지울 수 있다)
+        for (const u of state.units) {
+          if (u.owner !== p || u.ranged || u.dying) continue;
+          const amount = def.amount * sc;
+          u.maxHp += amount;
+          u.hp += amount;
+          u.buffs.push({ kind: 'armor', amount });
+        }
         break;
       case 'scout':
         for (let i = 0; i < def.draw + extra; i++) drawCard(state, P);
@@ -1376,8 +1377,7 @@ function doPlay(state, p, uid, target) {
         }
         break;
       case 'stockpile':
-        P.maxManaBonus += c.stars;
-        P.maxMana += c.stars;
+        P.manaRate += def.amount * sc;
         break;
       case 'invest':
         P.invested = true;
@@ -1385,9 +1385,16 @@ function doPlay(state, p, uid, target) {
       case 'catalyst':
         P.hand.find((x) => x.uid === target.uid).zeroCost = true;
         break;
-      case 'disrupt':
-        applySilence(state, findUnit(state, target.unitId), def.durationMs);
+      case 'disrupt': {
+        // 기절: 움직이지도 치지도 못하고, 필살기 게이지가 빈다 (전조 중인 필살기는 그대로 나간다)
+        const u = findUnit(state, target.unitId);
+        const dur = ccDuration(state, u, 'stun', def.durationMs * sc);
+        u.stunUntil = Math.max(u.stunUntil, t + dur);
+        dealDamage(state, u, (def.damage || 0) * sc, { source: { owner: p } }); // 맞아서 차는 게이지도 함께 비운다
+        if (!u.telegraphing) u.gauge = 0;
+        emit(state, { type: 'stun', p: u.owner, unitId: u.id, durationMs: dur });
         break;
+      }
       case 'decree': {
         const u = findUnit(state, target.unitId);
         P.decree = { unitId: u.id, until: t + def.durationMs * sc, amount: def.amount };

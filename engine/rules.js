@@ -35,7 +35,6 @@ export const DEFAULT_RULES = Object.freeze({
   slowMaxStacks: 2,
   slowDurationMs: 2000,
   slowCap: 0.5,
-  silenceMaxMs: 2000,
   ccRepeatWindowMs: 3000, // 이 안에 같은 효과가 다시 걸리면 지속 시간 절반
 
   // 유닛 키워드

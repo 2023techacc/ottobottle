@@ -62,6 +62,8 @@ function initMatch() {
   fillSelect($('mMode'), Object.entries(E.MODES).map(([id, m]) => [id, `${m.name} (${m.players}명, HP ${m.econ.playerHp}, 픽 ${m.econ.picks}종)`]), 'rank8');
   fillSelect($('mCommander'), cmds, 'general');
   fillSelect($('mOpCommander'), [['random', '무작위'], ...cmds], 'random');
+  fillSelect($('mBotPersona'), [['random', '봇마다 무작위'], ...E.PERSONA_IDS.map((id) => [id, E.PERSONAS[id].name])], 'random');
+  $('mBotPersona').addEventListener('change', renderLobby);
   $('mSeed').value = String(1 + Math.floor(Math.random() * 99999));
   lobby.picks = E.botPicks(E.makeRng(7), lobbyEcon());
 
@@ -218,8 +220,12 @@ function renderLobby() {
   const many = mode.players > 2;
   $('mOpCommanderRow').hidden = many;
   $('mOpNote').textContent = many
-    ? `상대는 봇 ${mode.players - 1}명이고 지휘관은 무작위다. 라운드마다 결투, 난투장, 연합전, 보스 레이드가 돌아가며 나온다.`
+    ? `상대는 봇 ${mode.players - 1}명이다. 지휘관은 봇의 성격을 따라 고른다. 라운드마다 결투, 난투장, 연합전, 보스 레이드가 돌아가며 나온다.`
     : '';
+  const pc = $('mBotPersona').value;
+  $('mPersonaNote').textContent = pc === 'random'
+    ? `성격: ${E.PERSONA_IDS.map((id) => E.PERSONAS[id].name).join(' · ')}. 성격마다 좋아하는 지휘관과 카드, 상점 성향, 전투 버릇이 다르다.`
+    : `${E.PERSONAS[pc].name}: ${E.PERSONAS[pc].text}`;
   $('mLead').textContent = many
     ? `지휘관과 픽 카드 ${need}종을 고른 뒤, 상점과 전투를 반복한다. HP ${econ.playerHp}이 0이 되면 탈락하고, 마지막까지 남으면 이긴다. 1~2라운드는 중립 몬스터와 싸우는 연습이다.`
     : `지휘관과 픽 카드 ${need}종을 고른 뒤, 상점과 전투를 반복한다. 상대의 HP ${econ.playerHp}을 먼저 0으로 만들면 이긴다. 1~2라운드는 중립 몬스터와 싸우는 연습이라 HP를 잃지 않는다.`;
@@ -234,12 +240,17 @@ function startMatch() {
   const rng = E.makeRng(E.hashSeed(seed, 'opponent'));
   const players = [{ commander: $('mCommander').value, picks: lobby.picks, name: n > 2 ? '나' : undefined }];
   const styles = [null];
+  const used = {};
   for (let i = 1; i < n; i++) {
+    // 봇마다 성격이 있다: 좋아하는 지휘관·카드, 상점 성향, 전투 버릇 (engine/personas.js)
+    const choice = $('mBotPersona').value;
+    const persona = choice === 'random' ? rng.pick(E.PERSONA_IDS) : choice;
     let commander = n === 2 ? $('mOpCommander').value : 'random';
-    if (commander === 'random') commander = rng.pick(E.COMMANDER_IDS);
-    players.push({ commander, picks: E.botPicks(rng, econ), name: n > 2 ? `봇 ${i}` : undefined });
-    const style = $('mBotStyle').value;
-    styles.push(style === 'random' ? rng.pick(Object.keys(E.SHOP_STYLES)) : style);
+    if (commander === 'random') commander = E.personaCommander(rng, persona, E.COMMANDER_IDS);
+    used[persona] = (used[persona] || 0) + 1;
+    const name = E.PERSONAS[persona].name + (used[persona] > 1 ? ` ${used[persona]}` : '');
+    players.push({ commander, persona, picks: E.botPicks(rng, econ, persona), name });
+    styles.push(null); // 상점 성향은 성격을 따른다
   }
   match = {
     game: E.createGame({ seed, mode, players }),
@@ -299,7 +310,8 @@ function endMatch() {
 
 function runBotShops() {
   const { game } = match;
-  for (const P of game.players) if (P.idx !== ME && P.alive) E.runShopBot(game, P.idx, { style: match.styles[P.idx] });
+  // 첩보원 봇은 맨 뒤에: 다른 사람이 고른 시작 카드를 보고 고른다
+  for (const p of E.shopBotOrder(game)) if (p !== ME && game.players[p].alive) E.runShopBot(game, p, { style: match.styles[p] });
 }
 
 function beginShop() {
@@ -434,7 +446,9 @@ function renderOpponents(game, info) {
     if (!ghost && !ally && spy) {
       extra = `<div class="pickhint">첩보원 패시브로 본 시작 카드: ${esc(src.opening.map((k) => E.cardLabel(src.deck.find((x) => x.key === k))).join(', ') || '없음')}</div>`;
     } else if (!ghost && !ally && c.seesOpening) extra = '<div><small>이 첩보원이 내 시작 카드를 미리 본다.</small></div>';
+    const persona = src.persona && E.PERSONAS[src.persona];
     return `<div class="opp"><div><b>${esc(name)}</b>${name === c.name ? '' : ` <small>${esc(c.name)}</small>`}${tags}${hp}</div>
+      ${persona ? `<div><small>성격: ${esc(persona.text)}</small></div>` : ''}
       <div><small>패시브: ${esc(c.passive)}</small></div>${extra}
       <div class="decklist">${deckChips(deck)}</div></div>`;
   }).join('');
@@ -583,6 +597,8 @@ function goBattle() {
   const battles = E.roundBattles(game);
   const mine = battles.find((b) => b.sides.includes(ME));
   seatMeFirst(mine);
+  // 봇은 고른 난이도와 자기 성격으로 싸운다 (유령은 원래 주인의 성격)
+  E.assignBattleBots(game, battles, () => match.botLevel);
   // 내가 끼지 않는 전투는 바로 계산한다
   for (const b of battles) if (b !== mine) b.state = E.runRoundBattle(b).state;
   const opts = {

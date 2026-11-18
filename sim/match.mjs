@@ -5,6 +5,9 @@
 //   node sim/match.mjs --mode rank8         8인 경기 60판
 //   node sim/match.mjs --games 1000
 //   node sim/match.mjs --econ "{\"playerHp\":60}"     경제 수치를 바꿔서
+//   node sim/match.mjs --spy-info on        첩보원 봇이 상대 시작 카드를 보고 미리 돌려 본다 (6~7배 느리다)
+//   node sim/match.mjs --levels             플레이어마다 전투 봇 난이도를 무작위로 (난이도별 순위를 본다)
+//   node sim/match.mjs --personas           플레이어마다 봇 성격을 무작위로 (지휘관·상점 성향도 성격을 따른다. 성격별 순위를 본다)
 //
 // 결과는 sim/out/match_<모드>_*.csv 에도 저장한다.
 
@@ -19,6 +22,9 @@ const N = E.MODES[MODE].players;
 const GAMES = Number(args.games || (MODE === 'duel' ? 300 : 60));
 const SEED = Number(args.seed || 1);
 const ECON = args.econ ? JSON.parse(args.econ) : {};
+const SPY_INFO = args['spy-info'] === 'on'; // --spy-info on: 첩보원 봇이 상대 시작 카드를 보고 미리 돌려 본다 (느리다)
+const LEVELS = args.levels ? Object.keys(E.BOT_LEVELS) : null; // --levels: 플레이어마다 난이도를 무작위로
+const PERSONAS = args.personas ? E.PERSONA_IDS : null; // --personas: 플레이어마다 성격을 무작위로
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));
 const STYLES = Object.keys(E.SHOP_STYLES);
 const FORMAT_NAMES = { practice: '연습', duel: '결투', melee4: '난투장', alliance: '연합전', boss: '보스 레이드' };
@@ -27,23 +33,30 @@ const t0 = Date.now();
 function playGame(seed) {
   const rng = E.makeRng(E.hashSeed(seed, 'setup'));
   const econ = { ...E.DEFAULT_ECON, ...E.MODES[MODE].econ, ...ECON };
-  const players = Array.from({ length: N }, () => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng, econ) }));
-  const styles = players.map(() => rng.pick(STYLES));
+  const players = Array.from({ length: N }, () => {
+    if (!PERSONAS) return { commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng, econ) };
+    const persona = rng.pick(PERSONAS);
+    return { persona, commander: E.personaCommander(rng, persona, E.COMMANDER_IDS), picks: E.botPicks(rng, econ, persona) };
+  });
+  // 성격이 있으면 상점 성향도 성격을 따른다 (styles[p]가 null이면 상점 봇이 성격의 성향을 쓴다)
+  const styles = players.map((pc) => (pc.persona ? null : rng.pick(STYLES)));
+  const levels = players.map(() => (LEVELS ? rng.pick(LEVELS) : 'normal'));
   const game = E.createGame({ seed, players, mode: MODE, econ: ECON });
   for (const P of game.players) E.runDraftBot(game, P.idx);
   const perRound = [];
   const formats = [];
   let battleMs = 0;
   while (game.phase !== 'over' && game.round < 120) {
-    for (const P of game.players) E.runShopBot(game, P.idx, { style: styles[P.idx] });
+    for (const p of E.shopBotOrder(game)) E.runShopBot(game, p, { style: styles[p], spyInfo: SPY_INFO });
     perRound.push(game.players.map((P) => ({ alive: P.alive, level: P.level, gold: P.gold, deck: P.deck.length, hp: P.hp })));
-    const battles = E.roundBattles(game).map((b) => ({ ...b, state: E.runRoundBattle(b).state }));
+    // 플레이어(와 그 유령)는 자기 난이도·성격으로 싸운다. 중립 몬스터·보스는 그대로
+    const battles = E.assignBattleBots(game, E.roundBattles(game), (p) => levels[p]).map((b) => ({ ...b, state: E.runRoundBattle(b).state }));
     const s = E.finishRound(game, battles);
     const longest = Math.max(...s.results.map((r) => r.timeMs));
     battleMs += longest;
     formats.push({ format: s.format, ms: longest, damage: s.results.reduce((a, r) => a + r.damage, 0), sides: s.results.length });
   }
-  return { game, styles, perRound, battleMs, formats };
+  return { game, styles, levels, perRound, battleMs, formats };
 }
 
 const rounds = [];
@@ -51,13 +64,15 @@ const minutes = [];
 const firstOut = [];
 const cmds = new Tally();
 const styleTally = new Tally();
+const levelTally = new Tally();
+const personaTally = new Tally();
 const cardBuys = new Tally();
 const byRound = new Tally();
 const byFormat = new Tally();
 const sum = { level: 0, deck: 0, stars: 0, fused: 0, gold: 0, rerolls: 0, xp: 0, removed: 0, winnerHp: 0, comebacks: 0, seat0: 0, draws: 0 };
 
 for (let i = 0; i < GAMES; i++) {
-  const { game, styles, perRound, battleMs, formats } = playGame(E.hashSeed(SEED, 'game', i));
+  const { game, styles, levels, perRound, battleMs, formats } = playGame(E.hashSeed(SEED, 'game', i));
   rounds.push(game.round);
   minutes.push((game.round * game.econ.shopSeconds * 1000 + battleMs) / 60000);
   const outs = game.players.filter((P) => P.eliminatedRound).map((P) => P.eliminatedRound);
@@ -69,7 +84,9 @@ for (let i = 0; i < GAMES; i++) {
     const pts = game.winner === -1 && N === 2 ? 0.5 : (N - P.place) / (N - 1);
     const row = { n: 1, pts, place: P.place, first: P.place === 1 ? 1 : 0, top: P.place <= N / 2 ? 1 : 0 };
     cmds.add(P.commander, row);
-    styleTally.add(styles[p], row);
+    if (styles[p]) styleTally.add(styles[p], row);
+    if (P.persona) personaTally.add(P.persona, row);
+    if (LEVELS) levelTally.add(levels[p], row);
     sum.level += P.level;
     sum.deck += P.deck.length;
     sum.stars += P.deck.filter((c) => c.stars > 1).length;
@@ -139,6 +156,18 @@ const cmdRows = cmds.entries().map(([id, r]) => row(E.COMMANDERS[id].name, r)).s
 const styleRows = styleTally.entries().map(([id, r]) => row(styleNames[id], r)).sort((a, b) => a.평균_순위 - b.평균_순위);
 console.table([...cmdRows, ...styleRows]);
 writeCsv(path.join(OUT, `match_${MODE}_commanders.csv`), [...cmdRows, ...styleRows]);
+if (PERSONAS) {
+  const personaRows = PERSONAS.filter((k) => personaTally.rows.get(k)).map((k) => row(E.PERSONAS[k].name, personaTally.rows.get(k))).sort((a, b) => a.평균_순위 - b.평균_순위);
+  console.log('\n━━ 봇 성격별 ━━');
+  console.table(personaRows);
+  writeCsv(path.join(OUT, `match_${MODE}_personas.csv`), personaRows);
+}
+if (LEVELS) {
+  const levelRows = LEVELS.filter((k) => levelTally.rows.get(k)).map((k) => row(E.BOT_LEVELS[k].name || k, levelTally.rows.get(k)));
+  console.log('\n━━ 전투 봇 난이도별 ━━');
+  console.table(levelRows);
+  writeCsv(path.join(OUT, `match_${MODE}_levels.csv`), levelRows);
+}
 
 console.log('\n━━ 많이 산 카드 ━━');
 const buyRows = cardBuys.entries().map(([id, r]) => ({

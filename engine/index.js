@@ -7,3 +7,4 @@ export * from './shopbot.js';
 // 유닛 소환 전투. 이름이 흔해서(step, applyAction …) Field 아래에 묶는다.
 export * as Field from './field.js';
 export * from './fieldbot.js';
+export * from './personas.js';

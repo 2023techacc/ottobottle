@@ -142,7 +142,7 @@ test('가시: 근접 공격자에게 매번 피해. 유닛 공격 배율을 따�
   const d = put(s, 0, 0, 0, 'dagger');
   dummy(s, 1, 0, 1, 'shield', { fuse: 'thorns' });
   run(s, 1100);
-  near(d.hp, 7);
+  near(d.hp, E.CARDS.dagger.hp - 2);
 
   s = F.createField({ seed: 1, players: [{ commander: 'merchant', deck: filler() }, { commander: 'merchant', deck: filler() }] });
   const r = put(s, 0, 0, 0, 'rats');
@@ -167,7 +167,7 @@ test('집결: 가까이(1.7 안) 있는 아군 1기당 공격 +2 × 유닛 공�
   near(F.currentAtk(d, v), (2 + 2) * 0.5, '기본 규칙(공격 ×0.5)에서는 아군 1기당 +1');
 });
 
-test('냉기: 공격 간격 +15%, 침묵(교란 2초)은 필살기 게이지를 멈춘다', () => {
+test('냉기: 공격 간격 +15%. 교란은 피해 6, 2초 동안 기절(움직이지도 치지도 못한다), 필살기 게이지를 비운다', () => {
   const s = mk();
   put(s, 0, 0, -3, 'frostwitch');
   const l = still(s, 1, 0, 2, 'lancer');
@@ -178,16 +178,29 @@ test('냉기: 공격 간격 +15%, 침묵(교란 2초)은 필살기 게이지를 
 
   const t = mk();
   const pyro = dummy(t, 1, 0, 3, 'pyro');
+  pyro.gauge = 80;
   const d = give(t, 0, 'disrupt');
   assert.equal(play(t, 0, d, { unitId: pyro.id }).ok, true);
-  assert.equal(pyro.silenceUntil, 2000);
+  assert.equal(pyro.stunUntil, 2000);
+  assert.equal(pyro.gauge, 0);
+  near(pyro.hp, pyro.maxHp - 6);
+
+  // 기절한 창기병은 붙어 있는 방패병을 치지 못한다
+  const k = mk();
+  const sh = dummy(k, 0, 0, -1, 'shield');
+  const ln = still(k, 1, 0, 0.2, 'lancer');
+  play(k, 0, give(k, 0, 'disrupt'), { unitId: ln.id });
+  run(k, 1900);
+  assert.equal(sh.hp, sh.maxHp);
+  run(k, 1700);
+  assert.ok(sh.hp < sh.maxHp, '기절이 풀리면 다시 친다');
 });
 
 test('강화 2성은 공격·체력 1.8배, 융합 효과는 유닛에 붙고 이름에 나온다', () => {
   const s = mk();
   const u = put(s, 0, 0, -3, 'lancer', { stars: 2 });
-  near(u.atk, 10.8);
-  near(u.maxHp, 32.4);
+  near(u.atk, E.CARDS.lancer.atk * 1.8);
+  near(u.maxHp, E.CARDS.lancer.hp * 1.8);
   const f = put(s, 0, 2, -3, 'shield', { fuse: 'lifesteal' });
   assert.deepEqual(f.keywords, ['guard', 'lifesteal']);
   assert.equal(f.name, '흡혈 방패병');
@@ -195,34 +208,36 @@ test('강화 2성은 공격·체력 1.8배, 융합 효과는 유닛에 붙고 �
 
 // ───────────────────────── 주문·강화·운영 ─────────────────────────
 
-test('화염탄: 피해 6, 연계(3초 안에 다른 카드를 냈다면) 10', () => {
+test('화염탄: 피해 7, 연계(3초 안에 다른 카드를 냈다면) 12', () => {
   const s = mk();
   const u = dummy(s, 1, 0, 3, 'colossus');
+  const hp = u.maxHp;
   play(s, 0, give(s, 0, 'firebolt'), { unitId: u.id });
-  near(u.hp, 54);
+  near(u.hp, hp - 7);
   run(s, 1000);
   play(s, 0, give(s, 0, 'firebolt'), { unitId: u.id });
-  near(u.hp, 44, '1초 전에 카드를 냈으므로 연계');
+  near(u.hp, hp - 7 - 12, '1초 전에 카드를 냈으므로 연계');
   const c = give(s, 0, 'firebolt');
   run(s, 3100);
   play(s, 0, c, { unitId: u.id });
-  near(u.hp, 38, '3초가 지나 연계가 끊겼다');
+  near(u.hp, hp - 7 - 12 - 7, '3초가 지나 연계가 끊겼다');
 });
 
-test('강철 갑옷은 체력 +12, 정화는 강화를 지운다. 각성은 필살기 게이지 +60%', () => {
+test('강철 갑옷은 체력 +25, 정화는 강화를 지우고 피해 7. 각성은 필살기 게이지를 채우고 공격 +2', () => {
   const s = mk();
   const u = dummy(s, 1, 0, 3, 'lancer');
   play(s, 1, give(s, 1, 'armor'), { unitId: u.id });
-  assert.deepEqual([u.maxHp, u.hp], [30, 30]);
+  assert.deepEqual([u.maxHp, u.hp], [22 + 25, 22 + 25]);
   play(s, 0, give(s, 0, 'purify'), { unitId: u.id });
-  assert.deepEqual([u.maxHp, u.hp, u.buffs.length], [18, 18, 0]);
+  assert.deepEqual([u.maxHp, u.hp, u.buffs.length], [22, 22 - 7, 0]);
   const a = dummy(s, 0, 0, -3, 'archer');
   const sh = dummy(s, 0, 2, -3, 'shield');
   s.players[0].mana = 8;
   const aw = give(s, 0, 'awaken');
   assert.equal(play(s, 0, aw, { unitId: sh.id }).ok, false, '필살기가 없는 유닛에는 쓸 수 없다');
   assert.equal(play(s, 0, aw, { unitId: a.id }).ok, true);
-  assert.equal(a.gauge, 60);
+  assert.equal(a.gauge, 100);
+  near(F.currentAtk(s, a), E.CARDS.archer.atk + 2);
 });
 
 test('정찰·마나 결정·비축·징집령', () => {
@@ -242,14 +257,18 @@ test('정찰·마나 결정·비축·징집령', () => {
   assert.equal(F.effectiveCost(s, 0, cr), 0, '숙성: 5초마다 −1');
   const before = P.mana;
   play(s, 0, cr);
-  assert.equal(P.mana, before + 3);
+  assert.equal(P.mana, before + 4);
 
   s = mk();
   P = s.players[0];
   const st = give(s, 0, 'stockpile');
   play(s, 0, st);
-  assert.equal(P.maxMana, 4);
+  near(P.manaRate, 0.4, '마나 회복 40% 빠르게');
   assert.ok(P.exiled.includes(st));
+  P.mana = 0;
+  P.manaTimer = 0;
+  run(s, 3000);
+  assert.equal(P.mana, 2, '1.5초마다 1이던 것이 약 1.07초마다 1 (3초에 2)');
 
   s = mk({ d0: [...filler('lancer', 6), { id: 'rats' }, { id: 'bat' }, { id: 'firebolt' }, { id: 'scout' }] });
   P = s.players[0];
@@ -258,21 +277,20 @@ test('정찰·마나 결정·비축·징집령', () => {
   assert.deepEqual(P.hand.map((c) => c.id).sort(), ['bat', 'rats']);
 });
 
-test('보급선: 다음 유닛 2장 비용 −1, ◆순환으로 1장 뽑는다', () => {
+test('보급선: 다음 유닛 3장 비용 −1, ◆순환으로 1장 뽑는다', () => {
   const s = mk({ d0: filler('shield', 20) });
   const P = s.players[0];
   P.mana = 8;
   const su = give(s, 0, 'supply');
-  const bats = [give(s, 0, 'bat'), give(s, 0, 'bat'), give(s, 0, 'bat')];
+  const bats = [give(s, 0, 'bat'), give(s, 0, 'bat'), give(s, 0, 'bat'), give(s, 0, 'bat')];
   P.hand.splice(0, 4);
   const handBefore = P.hand.length;
   play(s, 0, su);
   assert.equal(P.hand.length, handBefore, '보급선이 나가고 1장이 들어온다');
   assert.equal(F.effectiveCost(s, 0, bats[0]), 1);
-  assert.equal(play(s, 0, bats[0], { cell: 0 }).ok, true);
-  assert.equal(play(s, 0, bats[1], { cell: 1 }).ok, true);
-  assert.equal(F.effectiveCost(s, 0, bats[2]), 2);
-  assert.equal(P.mana, 8 - 2 - 1 - 1);
+  for (let i = 0; i < 3; i++) assert.equal(play(s, 0, bats[i], { cell: i }).ok, true);
+  assert.equal(F.effectiveCost(s, 0, bats[3]), 2);
+  assert.equal(P.mana, 8 - 1 - 1 - 1 - 1);
 });
 
 test('촉매와 연금술사: 융합 카드 비용 −1, 촉매를 쓰면 0. 마나가 모자라면 낼 수 없다', () => {
@@ -310,9 +328,9 @@ test('전장: 폭우, 안개, 마력 폭주, 화산. 과열은 30초 뒤 매초 
   s = mk({ battlefield: 'volcano', rules: { commanderHp: 9999 } });
   const c = dummy(s, 0, 0, -3, 'colossus');
   run(s, 9900);
-  near(c.hp, 60);
+  near(c.hp, c.maxHp);
   run(s, 100);
-  near(c.hp, 57);
+  near(c.hp, c.maxHp * 0.95);
 
   s = mk({ rules: { battleMs: 60000 } });
   const u = dummy(s, 0, 0, -3, 'shield');
@@ -322,19 +340,22 @@ test('전장: 폭우, 안개, 마력 폭주, 화산. 과열은 30초 뒤 매초 
 
 // ───────────────────────── 2026-11-17에 더한 카드 ─────────────────────────
 
-test('포고: 지목한 적 유닛을 내 유닛 전체가 먼저 노리고, 그 유닛이 받는 피해 +25%', () => {
+test('포고: 지목한 적 유닛이 사거리 안에 있으면 그 유닛부터 치고, 받는 피해 +100%. 멀리 있으면 쫓아가지 않는다', () => {
   const s = mk({ c0: 'lord' });
-  const l = put(s, 0, 0, -1, 'lancer');
-  const nearFoe = dummy(s, 1, 0, 0.2, 'shield');
+  const l = still(s, 0, 0, -1, 'lancer');
+  const nearFoe = dummy(s, 1, 0, 0.2, 'bat');
+  const sideFoe = dummy(s, 1, 1.2, -0.4, 'hammer'); // 사거리 안이지만 박쥐보다 멀다
   const farFoe = dummy(s, 1, 3.5, 4, 'colossus');
   assert.equal(F.chooseTarget(s, l).unit, nearFoe, '평소에는 가장 가까운 적');
-  const d = give(s, 0, 'decree');
-  assert.equal(play(s, 0, d, { unitId: farFoe.id }).ok, true);
-  assert.equal(F.chooseTarget(s, l).unit, farFoe, '지목하면 멀어도 그 유닛부터');
-  while (farFoe.hp === farFoe.maxHp && s.timeMs < 5000) F.step(s);
-  near(farFoe.maxHp - farFoe.hp, 6 * 1.25, '창기병이 걸어가서 쳤고, 피해 +25%');
+  assert.equal(play(s, 0, give(s, 0, 'decree'), { unitId: farFoe.id }).ok, true);
+  assert.equal(F.chooseTarget(s, l).unit, nearFoe, '멀리 있는 유닛을 지목해도 쫓아가지 않는다');
+  s.players[0].decree = null;
+  assert.equal(play(s, 0, give(s, 0, 'decree'), { unitId: sideFoe.id }).ok, true);
+  assert.equal(F.chooseTarget(s, l).unit, sideFoe, '사거리 안의 지목한 유닛부터');
+  while (sideFoe.hp === sideFoe.maxHp && s.timeMs < 5000) F.step(s);
+  near(sideFoe.maxHp - sideFoe.hp, E.CARDS.lancer.atk * 2, '받는 피해 +100%');
   run(s, 6100);
-  assert.equal(F.chooseTarget(s, l).unit === farFoe && F.chooseTarget(s, l).d > 3, false, '6초가 지나면 다시 가까운 적');
+  assert.ok(s.players[0].decree.until <= s.timeMs, '6초가 지나면 지목이 풀린다');
 });
 
 test('포고는 어느 형식에서나 낼 수 있다 (예전에는 난전 전용)', () => {
@@ -344,17 +365,17 @@ test('포고는 어느 형식에서나 낼 수 있다 (예전에는 난전 전�
   assert.ok(foe);
 });
 
-test('눈보라: 표적과 그 주변(2.2 안)의 적 모두에게 피해 4와 감속. 멀리 있는 적과 내 유닛은 맞지 않는다', () => {
+test('눈보라: 표적과 그 주변(2.2 안)의 적 모두에게 피해 8과 감속. 멀리 있는 적과 내 유닛은 맞지 않는다', () => {
   const s = mk();
   const a = dummy(s, 1, 0, 3, 'lancer');
   const b = dummy(s, 1, 1.5, 3, 'lancer');
   const far = dummy(s, 1, -4, 3, 'lancer');
   const mine = dummy(s, 0, 0.5, 2.2, 'lancer');
   assert.equal(play(s, 0, give(s, 0, 'blizzard'), { unitId: a.id }).ok, true);
-  near(a.hp, 14);
-  near(b.hp, 14);
-  near(far.hp, 18);
-  near(mine.hp, 18);
+  near(a.hp, 22 - 8);
+  near(b.hp, 22 - 8);
+  near(far.hp, 22);
+  near(mine.hp, 22);
   assert.equal(a.slows.length, 1);
 });
 
@@ -365,12 +386,11 @@ test('폭탄 고블린: 쓰러지면 주변(2 안)의 적 모두에게 피해 8 
   const weak = dummy(s, 1, -1, 0.5, 'rats');
   const far = dummy(s, 1, 4, 3, 'shield');
   const ally = dummy(s, 0, 0, -1.5, 'bat');
-  play(s, 1, give(s, 1, 'firebolt'), { unitId: bomb.id });
-  play(s, 1, give(s, 1, 'firebolt'), { unitId: bomb.id }); // 연계 10: 체력 7을 넘는다
+  play(s, 1, give(s, 1, 'firebolt'), { unitId: bomb.id }); // 피해 7 = 체력 7
   assert.equal(F.findUnit(s, bomb.id), null);
-  near(a.hp, 14 - 8);
-  near(far.hp, 14);
-  near(ally.hp, 8, '내 유닛은 맞지 않는다');
+  near(a.hp, E.CARDS.shield.hp - 8);
+  near(far.hp, E.CARDS.shield.hp);
+  near(ally.hp, E.CARDS.bat.hp, '내 유닛은 맞지 않는다');
   assert.equal(F.findUnit(s, weak.id), null, '쥐 떼(체력 4)는 폭발에 쓰러졌다');
   assert.equal(F.unitsOf(s, 1).filter((u) => u.token).length, 2, '쓰러진 쥐 떼는 분열했다');
 });
@@ -383,7 +403,7 @@ test('망치 기사: 친 대상을 1.5만큼 밀어낸다 (거신은 절반, 보
   t.speed = 1; // 걷는 유닛이어야 밀린다
   run(s, 1600);
   near(t.y, 1.2 + 1.5);
-  near(t.hp, 18 - 5);
+  near(t.hp, E.CARDS.lancer.hp - E.CARDS.hammer.atk);
 
   const c = mk();
   const h2 = dummy(c, 0, 0, 0, 'hammer');

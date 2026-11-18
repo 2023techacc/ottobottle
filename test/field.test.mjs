@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as E from '../engine/index.js';
 
 const F = E.Field;
+const C = E.CARDS;
 const filler = (id = 'shield', n = 8) => Array.from({ length: n }, () => ({ id }));
 // 숫자를 읽기 쉽게, 테스트에서는 배율 없이 기획서 수치 그대로 쓴다
 const PLAIN = { unitAtkMult: 1, unitHpMult: 1, commanderHp: 30 };
@@ -121,14 +122,15 @@ test('근접 유닛은 붙을 때까지 걸어가서 싸우고, 싸우는 동안
   const s = mk();
   const lancer = put(s, 0, 0, -1, 'lancer'); // 사거리 1.5
   const shield = dummy(s, 1, 0, 3, 'shield');
+  shield.hp = shield.maxHp = 3 * C.lancer.atk; // 세 번 맞아야 쓰러진다
   run(s, 1500);
   assert.equal(lancer.moving, false);
   assert.ok(F.distance(lancer, shield) <= 1.5 + 1e-9 && F.distance(lancer, shield) > 0.9, `거리 ${F.distance(lancer, shield)}`);
-  near(shield.hp, 8, '1.5초에 첫 공격');
+  near(shield.hp, 2 * C.lancer.atk, '1.5초에 첫 공격');
   const at = [lancer.x, lancer.y];
   run(s, 1500);
   assert.deepEqual([lancer.x, lancer.y], at);
-  near(shield.hp, 2);
+  near(shield.hp, C.lancer.atk);
 });
 
 test('원거리 유닛은 사거리 안에 들 때까지만 다가가서 제자리에서 쏜다', () => {
@@ -139,13 +141,13 @@ test('원거리 유닛은 사거리 안에 들 때까지만 다가가서 제자�
   const d = F.distance(archer, target);
   assert.ok(d <= 6.35 + 1e-9 && d > 5.9, `거리 ${d}`);
   assert.equal(archer.moving, false);
-  assert.ok(target.hp < 60);
+  assert.ok(target.hp < target.maxHp);
   const s2 = mk();
   const still = put(s2, 0, 0, -1, 'archer');
   const t2 = dummy(s2, 1, 0, 5, 'shield'); // 딱 6
   run(s2, 1000);
   assert.deepEqual([still.x, still.y], [0, -1], '이미 사거리 안이면 움직이지 않는다');
-  near(t2.hp, 11);
+  near(t2.hp, C.shield.hp - C.archer.atk);
 });
 
 test('적 유닛이 없으면 적 본진으로 걸어가서 지휘관을 친다. 원거리는 멀리서 친다', () => {
@@ -225,9 +227,9 @@ test('수호: 가까이(1.7 안) 있는 아군이 받는 피해의 20%를 대신
   const guard = dummy(s, 1, 1.2, 1.1, 'shield'); // 1.63 떨어져 있다
   const farGuard = dummy(s, 1, 3, 0, 'shield');
   run(s, 1100);
-  near(bat.hp, 8 - 4);
-  near(guard.hp, 14 - 1);
-  near(farGuard.hp, 14, '멀리 있는 수호는 대신 받지 않는다');
+  near(bat.hp, C.bat.hp - 4);
+  near(guard.hp, C.shield.hp - 1);
+  near(farGuard.hp, C.shield.hp, '멀리 있는 수호는 대신 받지 않는다');
 });
 
 test('관통: 표적 바로 뒤의 적에게도 50% 피해', () => {
@@ -237,9 +239,9 @@ test('관통: 표적 바로 뒤의 적에게도 50% 피해', () => {
   const behind = dummy(s, 1, 0, 1.2, 'archer');
   const side = dummy(s, 1, 2.5, 0, 'archer');
   run(s, 1500);
-  near(front.hp, 2);
-  near(behind.hp, 3);
-  near(side.hp, 6, '옆에 있으면 맞지 않는다');
+  near(front.hp, C.bat.hp - C.lancer.atk);
+  near(behind.hp, C.archer.hp - C.lancer.atk / 2);
+  near(side.hp, C.archer.hp, '옆에 있으면 맞지 않는다');
 });
 
 test('분열: 쓰러지면 그 자리에 작은 복제 2개가 나온다', () => {
@@ -253,7 +255,7 @@ test('분열: 쓰러지면 그 자리에 작은 복제 2개가 나온다', () =>
   near(tokens[0].maxHp, 2);
 });
 
-test('화염술사 필살기: 전조 1초 뒤 표적 주변(반지름 2.2)에 피해 20', () => {
+test('화염술사 필살기: 전조 1초 뒤 표적 주변(반지름 2.2)에 피해 28', () => {
   const s = mk({ rules: { commanderHp: 9999 } });
   const pyro = dummy(s, 1, 0, 5, 'pyro'); // 사거리 8
   const center = dummy(s, 0, 0, -2, 'colossus');
@@ -264,9 +266,10 @@ test('화염술사 필살기: 전조 1초 뒤 표적 주변(반지름 2.2)에 �
   assert.equal(s.telegraphs.length, 1);
   assert.deepEqual([s.telegraphs[0].x, s.telegraphs[0].y, s.telegraphs[0].radius], [0, -2, 2.2]);
   run(s, 900);
-  assert.equal(center.hp, 60, '전조 중에는 아직 피해가 없다');
+  const full = center.maxHp;
+  assert.equal(center.hp, full, '전조 중에는 아직 피해가 없다');
   run(s, 100);
-  assert.deepEqual([center.hp, close.hp, far.hp], [40, 40, 60]);
+  assert.deepEqual([center.hp, close.hp, far.hp], [full - 28, full - 28, full]);
 });
 
 test('필살기 범위는 전조 때의 자리로 정해진다: 그 사이에 벗어나면 맞지 않는다', () => {
@@ -279,7 +282,7 @@ test('필살기 범위는 전조 때의 자리로 정해진다: 그 사이에 �
   assert.equal(play(s, 0, give(s, 0, 'retreat'), { unitId: target.id, cell: F.cellIndex(0, 0) }).ok, true);
   assert.deepEqual([target.x, target.y], [-4, -5]);
   run(s, 1000);
-  assert.equal(target.hp, 60);
+  assert.equal(target.hp, target.maxHp);
 });
 
 test('거신 필살기: 전조 1.2초 뒤 자기 주변(반지름 3.2)에 피해 25', () => {
@@ -292,40 +295,41 @@ test('거신 필살기: 전조 1.2초 뒤 자기 주변(반지름 3.2)에 피해
   run(s, 100);
   assert.deepEqual([s.telegraphs[0].x, s.telegraphs[0].y, s.telegraphs[0].radius], [0, 0, 3.2]);
   run(s, 1200);
-  assert.deepEqual([a.hp, b.hp, far.hp], [35, 35, 60]);
+  const full = a.maxHp;
+  assert.deepEqual([a.hp, b.hp, far.hp], [full - 25, full - 25, full]);
 });
 
 // ───────────────────────── 카드 ─────────────────────────
 
-test('후퇴: 내 배치 칸으로 옮기고 체력 5 회복', () => {
+test('후퇴: 내 배치 칸으로 옮기고 체력 20 회복 (0마나)', () => {
   const s = mk();
-  const bat = dummy(s, 0, 0, 4, 'bat'); // 상대 쪽까지 나가 있다
-  bat.hp = 2;
+  const bat = dummy(s, 0, 0, 4, 'lancer'); // 상대 쪽까지 나가 있다
+  bat.hp = 1;
   const r = give(s, 0, 'retreat');
   assert.equal(play(s, 0, r, { unitId: bat.id, cell: 99 }).ok, false);
   assert.equal(play(s, 0, r, { unitId: bat.id, cell: F.cellIndex(2, 0) }).ok, true);
   assert.deepEqual([bat.x, bat.y], [0, -5]);
-  near(bat.hp, 7);
+  near(bat.hp, 21);
 });
 
-test('전투 함성은 근접 유닛에만, 방진은 원거리 유닛이 받는 범위 피해를 줄인다', () => {
+test('전투 함성과 방진은 근접 유닛에만: 공격 +3 (8초), 체력 +14 (쓰러질 때까지)', () => {
   const s = mk({ rules: { commanderHp: 9999 } });
   const melee = dummy(s, 0, 0, -1, 'colossus');
   const ranged = dummy(s, 0, 1, -2, 'pyro');
+  const foe = dummy(s, 1, 0, 4, 'colossus');
   s.players[0].mana = 6;
   play(s, 0, give(s, 0, 'warcry'));
-  near(F.currentAtk(s, melee), 12);
-  near(F.currentAtk(s, ranged), 4);
-  const pyro = dummy(s, 1, 0, 5, 'pyro');
-  pyro.gauge = 100;
-  run(s, 100);
+  near(F.currentAtk(s, melee), C.colossus.atk + 3);
+  near(F.currentAtk(s, ranged), C.pyro.atk);
   play(s, 0, give(s, 0, 'phalanx'));
-  run(s, 1000);
-  near(melee.hp, 40, '근접 유닛은 그대로 20을 받는다');
-  near(ranged.hp, 6, '원거리 유닛은 절반만 받는다');
+  assert.deepEqual([melee.maxHp, melee.hp], [C.colossus.hp + 14, C.colossus.hp + 14]);
+  assert.equal(ranged.maxHp, C.pyro.hp);
+  assert.equal(foe.maxHp, C.colossus.hp, '상대 유닛은 그대로');
+  run(s, 8100);
+  near(F.currentAtk(s, melee), C.colossus.atk * F.overtimeMult(s), '8초가 지나면 함성이 끝난다');
 });
 
-test('연쇄 번개: 처음 맞은 유닛에서 가까운 순서로 10/7/5', () => {
+test('연쇄 번개: 처음 맞은 유닛에서 가까운 순서로 12/9/6', () => {
   const s = mk();
   s.players[0].mana = 4;
   const a = dummy(s, 1, -4, 0, 'lancer');
@@ -333,13 +337,14 @@ test('연쇄 번개: 처음 맞은 유닛에서 가까운 순서로 10/7/5', () 
   const c = dummy(s, 1, 0, 0, 'lancer');
   const d = dummy(s, 1, 4, 5, 'colossus');
   assert.equal(play(s, 0, give(s, 0, 'chain'), { unitId: a.id }).ok, true);
-  assert.deepEqual([a.hp, b.hp, c.hp, d.hp], [8, 11, 13, 60]);
+  const L = C.lancer.hp;
+  assert.deepEqual([a.hp, b.hp, c.hp, d.hp], [L - 12, L - 9, L - 6, d.maxHp]);
 });
 
-test('장군은 근접 유닛 체력 +10%, 좁은 협곡은 양쪽 끝 배치 줄을 막고, 안개는 원거리 유닛을 5초 가린다', () => {
+test('장군은 근접 유닛 체력 +5%, 좁은 협곡은 양쪽 끝 배치 줄을 막고, 안개는 원거리 유닛을 5초 가린다', () => {
   let s = mk({ commanders: ['general'] });
-  near(put(s, 0, 0, -5, 'shield').maxHp, 15.4);
-  near(put(s, 0, 2, -5, 'archer').maxHp, 6);
+  near(put(s, 0, 0, -5, 'shield').maxHp, C.shield.hp * 1.05);
+  near(put(s, 0, 2, -5, 'archer').maxHp, C.archer.hp);
 
   s = mk({ battlefield: 'canyon' });
   assert.equal(F.deployCells(s, 0).filter((c) => c.free).length, 9);

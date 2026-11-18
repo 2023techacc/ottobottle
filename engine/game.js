@@ -11,9 +11,9 @@ import { FIELD_RULES } from './field.js';
 
 /** 게임 모드. 인원과 HP·픽 수가 다르다. */
 export const MODES = Object.freeze({
-  duel: { name: '1:1 랭크', players: 2, econ: { playerHp: 40, picks: 8 } },
+  duel: { name: '1:1 랭크', players: 2, econ: { playerHp: 40, picks: 8, lordDamage: 0.6 } },
   // 8인은 기획서 목표(약 15라운드)에 맞춰 피해가 빨리 오른다: 기본 피해 3에서 라운드마다 +1(최대 20), 남은 유닛 한 기당 3
-  rank8: { name: '8인 랭크', players: 8, econ: { playerHp: 100, picks: 5, damageMin: 3, damageEvery: 1, damageMax: 20, survivorDamage: 3 } },
+  rank8: { name: '8인 랭크', players: 8, econ: { playerHp: 100, picks: 5, damageMin: 3, damageEvery: 1, damageMax: 20, survivorDamage: 3, lordDamage: 0.75 } },
 });
 
 /** 8인 로테이션 (기획서 예시). 1~2라운드는 연습, 15라운드부터는 남은 인원에 맞춘다. */
@@ -36,7 +36,7 @@ export const DEFAULT_ECON = Object.freeze({
   bossTop: { share: 0.25, options: 4, gold: 5 },
   bossMid: { share: 0.625, options: 3, gold: 0 },
   bossLowGold: 2,
-  lordMeleeDamage: 0.7, // 군주: 난전에서 받는 HP 피해 −30%
+  lordDamage: 0.75, // 군주: 받는 HP 피해 배율 (모드가 덮어쓴다: 8인 −25%, 1:1 −40%)
   maxTier5Picks: 1,
   pickCopyBonus: 0.5, // 누가 고른 카드는 한 명당 풀 장수 +50%
 
@@ -163,6 +163,7 @@ export function createGame(cfg) {
       idx,
       name: pc.name || c.name,
       commander: pc.commander,
+      persona: pc.persona || null, // 봇 성격 (personas.js). 규칙에는 영향이 없고 봇과 화면만 읽는다
       picks: [...pc.picks],
       hp: econ.playerHp,
       maxHp: econ.playerHp,
@@ -272,7 +273,7 @@ export function incomePreview(game, p) {
     base: e.baseIncome,
     interest: interestOf(game, P.gold),
     streak: streakBonusOf(game, P.streak),
-    commander: P.commander === 'merchant' ? 1 : 0,
+    commander: COMMANDERS[P.commander].goldPerRound || 0,
   };
   parts.total = parts.base + parts.interest + parts.streak + parts.commander;
   return parts;
@@ -333,7 +334,7 @@ function startRound(game) {
   for (const P of game.players) {
     if (!P.alive) continue;
     const inc = game.round === 1
-      ? { base: e.baseIncome, interest: 0, streak: 0, commander: P.commander === 'merchant' ? 1 : 0 }
+      ? { base: e.baseIncome, interest: 0, streak: 0, commander: COMMANDERS[P.commander].goldPerRound || 0 }
       : incomePreview(game, P.idx);
     inc.total = inc.base + inc.interest + inc.streak + inc.commander;
     P.gold += inc.total;
@@ -341,7 +342,7 @@ function startRound(game) {
     P.lastIncome = inc;
     if (game.round > 1) gainXp(game, P, e.xpPerRound);
     P.removesLeft = e.removesPerRound;
-    P.freeReroll = P.commander === 'merchant';
+    P.freeReroll = !!COMMANDERS[P.commander].freeReroll; // 라운드 첫 리롤 무료 (지금은 쓰는 지휘관이 없다)
     if (P.locked) P.locked = false; // 잠근 상점은 한 라운드 유지된다
     else rollShop(game, P);
   }
@@ -725,6 +726,8 @@ export function finishRound(game, battles) {
   const info = roundInfo(game);
   const summary = { round: game.round, format: info.format, battlefield: info.battlefield, results: [], groups: game.groups };
   const out = (r) => summary.results.push(r);
+  // 군주는 모든 형식에서 HP 피해를 덜 받는다 (올림)
+  const cut = (P, damage) => (P.commander === 'lord' ? Math.ceil(damage * e.lordDamage) : damage);
   const hit = (P, damage) => {
     P.hp -= damage;
     return damage;
@@ -753,10 +756,10 @@ export function finishRound(game, battles) {
 
     if (b.kind === 'duel') {
       if (res.winner === -1) {
-        const dmg = Math.ceil(info.baseDamage / 2);
         b.sides.forEach((p) => {
           if (p === null) return; // 유령은 피해를 받지 않는다
           const P = game.players[p];
+          const dmg = cut(P, Math.ceil(info.baseDamage / 2));
           hit(P, dmg);
           P.streak = 0;
           out({ p, kind: 'duel', group: gi, won: null, damage: dmg, gold: 0, timeMs: res.timeMs });
@@ -765,7 +768,7 @@ export function finishRound(game, battles) {
       }
       const w = res.winner;
       const l = 1 - w;
-      const dmg = info.baseDamage + Math.round(res.survivors[w] * e.survivorDamage);
+      const full = info.baseDamage + Math.round(res.survivors[w] * e.survivorDamage);
       if (b.sides[w] !== null) {
         const W = game.players[b.sides[w]];
         bumpStreak(W, true);
@@ -775,6 +778,7 @@ export function finishRound(game, battles) {
       }
       if (b.sides[l] !== null) {
         const L = game.players[b.sides[l]];
+        const dmg = cut(L, full);
         hit(L, dmg);
         bumpStreak(L, false);
         out({ p: L.idx, kind: 'duel', group: gi, won: false, damage: dmg, gold: 0, timeMs: res.timeMs });
@@ -794,6 +798,7 @@ export function finishRound(game, battles) {
         let dmg = 0;
         if (won === null) dmg = Math.ceil(info.baseDamage / 4);
         else if (!won) dmg = Math.ceil((info.baseDamage + winnersUnits * e.survivorDamage) / 2);
+        dmg = cut(P, dmg);
         hit(P, dmg);
         if (won === null) P.streak = 0;
         else bumpStreak(P, won);
@@ -812,8 +817,7 @@ export function finishRound(game, battles) {
       const P = game.players[p];
       const rank = res.ranks[i];
       const foes = res.survivors.reduce((sum, n, j) => (j !== i && !bs[j].dead ? sum + n : sum), 0);
-      let dmg = Math.ceil((info.baseDamage + foes * e.survivorDamage) * pctTable[rank]);
-      if (P.commander === 'lord') dmg = Math.ceil(dmg * e.lordMeleeDamage);
+      const dmg = cut(P, Math.ceil((info.baseDamage + foes * e.survivorDamage) * pctTable[rank]));
       hit(P, dmg);
       const won = rank === 0 ? true : rank === lastRank ? false : null;
       bumpStreak(P, won);

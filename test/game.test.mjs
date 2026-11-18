@@ -56,7 +56,7 @@ test('시작 상태: HP 40, 레벨 3, 시작 덱 8장, 첫 수입 5골드', () =
   const g = mk({ c1: 'merchant' });
   const [a, b] = g.players;
   assert.deepEqual([a.hp, a.level, a.deck.length, a.gold], [40, 3, 8, 5]);
-  assert.equal(b.gold, 6, '상인은 라운드당 +1');
+  assert.equal(b.gold, 7, '상인은 라운드당 +2');
   assert.equal(g.round, 1);
   assert.equal(E.roundInfo(g).format, 'practice');
   assert.equal(a.shop.length, 5);
@@ -115,17 +115,13 @@ test('구매: 가격은 등급, 풀에서 빠지고 덱에 들어간다', () => 
   assert.equal(E.buy(g, 0, 2).ok, false, '골드 부족');
 });
 
-test('리롤 2골드, 상인은 라운드 첫 리롤 무료', () => {
+test('리롤 2골드 (상인도 같다. 예전의 "라운드 첫 리롤 무료"는 2026-11-18에 뺐다)', () => {
   const g = mk({ c1: 'merchant' });
   assert.equal(E.reroll(g, 0).ok, true);
   assert.equal(g.players[0].gold, 3);
-  assert.equal(E.rerollCostOf(g, 1), 0);
+  assert.equal(E.rerollCostOf(g, 1), 2);
   E.reroll(g, 1);
-  assert.equal(g.players[1].gold, 6);
-  E.reroll(g, 1);
-  assert.equal(g.players[1].gold, 4);
-  fakeRound(g, 'lose');
-  assert.equal(E.rerollCostOf(g, 1), 0, '다음 라운드에 다시 무료');
+  assert.equal(g.players[1].gold, 5);
 });
 
 test('잠금: 다음 라운드에도 같은 상점이 유지된다 (무료)', () => {
@@ -229,11 +225,11 @@ test('강화: 합친 뒤 덱이 8장 밑으로 내려가면 안 된다', () => {
   assert.equal(E.upgrade(g, 0, 'shield', 1).ok, true);
 });
 
-test('융합: 재료의 ◆ 효과가 몸체에 붙고 재료는 사라진다. 경기당 3회, 연금술사는 5회', () => {
+test('융합: 재료의 ◆ 효과가 몸체에 붙고 재료는 사라진다. 경기당 3회 (연금술사도 3회)', () => {
   const g = mk({ c1: 'alchemist' });
   const P = g.players[0];
   assert.equal(P.fusionsLeft, 3);
-  assert.equal(g.players[1].fusionsLeft, 5);
+  assert.equal(g.players[1].fusionsLeft, 3);
   const [bat] = give(g, 0, 'bat');
   const [fb] = give(g, 0, 'firebolt');
   const [supply] = give(g, 0, 'supply');
@@ -309,7 +305,7 @@ test('1~2라운드는 연습: HP 피해 없음, 이기면 골드 +2', () => {
   assert.equal(g.round, 3);
 });
 
-test('결투: 패자는 기본 피해 + 승자 보드에 남은 유닛 수만큼 HP를 잃는다', () => {
+test('결투: 패자는 기본 피해 + 승자 보드에 남은 유닛 수만큼 HP를 잃는다. 군주는 1:1에서 40% 덜 받는다 (올림)', () => {
   const g = mk();
   skipPractice(g);
   const info = E.roundInfo(g);
@@ -317,7 +313,11 @@ test('결투: 패자는 기본 피해 + 승자 보드에 남은 유닛 수만큼
   assert.ok(E.BATTLEFIELD_IDS.includes(info.battlefield));
   assert.equal(E.roundBattles(g).length, 1);
   fakeRound(g, 0, [3, 0]);
-  assert.deepEqual(g.players.map((P) => P.hp), [40, 35]);
+  assert.deepEqual(g.players.map((P) => P.hp), [40, 40 - Math.ceil((2 + 3) * 0.6)], '1번 자리는 군주');
+  const h = mk({ c1: 'merchant' });
+  skipPractice(h);
+  fakeRound(h, 0, [3, 0]);
+  assert.deepEqual(h.players.map((P) => P.hp), [40, 35]);
 });
 
 test('기본 피해는 라운드에 따라 2에서 8까지 오른다', () => {
@@ -345,7 +345,7 @@ test('투자: 그 전투에서 이기면 골드 +3', () => {
   const a = g.players[0];
   a.gold = 0;
   fakeRound(g, 0, [0, 0], [true, true]);
-  assert.equal(a.gold, 3 + 5 + 1, '투자 3 + 기본 5 + 상인 1');
+  assert.equal(a.gold, 3 + 5 + 2, '투자 3 + 기본 5 + 상인 2');
 });
 
 test('HP가 0이 되면 경기가 끝난다', () => {
@@ -434,4 +434,60 @@ test('경기의 전투: 유닛 전투 규칙(FIELD_RULES)에 시작 카드와 �
   // 고른 시작 카드는 첫 손패에 들어 있다 (냈거나 손에 있거나)
   const id = P.deck[2].id;
   assert.ok(state.players[0].stats.plays[id] > 0 || state.players[0].hand.some((c) => c.id === id) || state.units.some((u) => u.owner === 0 && u.defId === id));
+});
+
+test('첩보원 봇: 상점은 맨 뒤에 돌고, 상대가 고른 시작 카드를 보고 미리 돌려 본 후보 중에서 고른다', () => {
+  const g = mk({ c0: 'spy', c1: 'general' });
+  assert.deepEqual(E.shopBotOrder(g), [1, 0], '첩보원은 맨 뒤');
+  skipPractice(g);
+  for (const p of E.shopBotOrder(g)) E.runShopBot(g, p, {});
+  const P = g.players[0];
+  const n = E.openingCount(g, 0);
+  assert.equal(P.opening.length, n);
+  const deck = P.deck.map((c) => ({ id: c.id, stars: c.stars, fuse: c.fuse }));
+  const options = E.OPENING_POLICIES.map((pol) => E.pickOpening(deck, n, pol, null, 3).map((i) => P.deck[i].key).sort().join(','));
+  assert.ok(options.includes([...P.opening].sort().join(',')), '정해진 후보 중 하나');
+  // 같은 상태면 같은 답 (미리 돌려 보는 판도 시드로 정해진다)
+  assert.deepEqual(E.spyOpening(g, 0, 4), E.spyOpening(g, 0, 4));
+});
+
+test('전투 봇 난이도는 입문·쉬움·보통·어려움 넷. 입문·쉬움은 마나를 모으지 않는다', () => {
+  assert.deepEqual(Object.keys(E.BOT_LEVELS), ['beginner', 'easy', 'normal', 'hard']);
+  assert.equal(E.BOT_LEVELS.beginner.plan, false);
+  assert.equal(E.BOT_LEVELS.easy.plan, false);
+  assert.ok(E.BOT_LEVELS.hard.reactMax < E.BOT_LEVELS.normal.reactMax);
+});
+
+test('봇 성격: 좋아하는 카드를 픽·드래프트·상점에서 더 고르고, 전투 봇에는 난이도 위에 버릇이 얹힌다', () => {
+  const econ = { ...E.DEFAULT_ECON, ...E.MODES.duel.econ };
+  // 돌격대장은 싼 근접 유닛을, 큰손은 비싼 유닛을 더 고른다 (같은 난수로 여러 번)
+  let rush = 0;
+  let big = 0;
+  for (let i = 0; i < 30; i++) {
+    rush += E.botPicks(E.makeRng(i), econ, 'rusher').filter((id) => ['rats', 'bat', 'banner'].includes(id)).length;
+    big += E.botPicks(E.makeRng(i), econ, 'rusher').filter((id) => ['lancer', 'hammer', 'colossus'].includes(id)).length;
+  }
+  assert.ok(rush > big);
+  let big2 = 0;
+  for (let i = 0; i < 30; i++) big2 += E.botPicks(E.makeRng(i), econ, 'big').filter((id) => ['lancer', 'hammer', 'colossus'].includes(id)).length;
+  assert.ok(big2 > big);
+
+  const bot = E.personaBot('hard', 'rusher');
+  assert.equal(bot.reactMax, E.BOT_LEVELS.hard.reactMax);
+  assert.equal(bot.saveMs, 0, '돌격대장은 마나를 모으지 않는다');
+  assert.equal(bot.likes.rats, E.PERSONAS.rusher.likes.rats);
+  assert.deepEqual(E.personaBot('easy'), E.BOT_LEVELS.easy, '성격이 없으면 난이도 그대로');
+
+  // 성격은 경기에 기록되고, 전투 봇은 연습 라운드의 중립 몬스터를 건드리지 않는다
+  const g = E.createGame({ seed: 4, startDecks: 'commander', players: [
+    { commander: 'general', persona: 'rusher', picks: PICKS_A },
+    { commander: 'merchant', persona: 'trader', picks: PICKS_B },
+  ] });
+  assert.deepEqual(g.players.map((P) => P.persona), ['rusher', 'trader']);
+  const practice = E.assignBattleBots(g, E.roundBattles(g), () => 'hard');
+  assert.equal(practice[0].cfg.players[0].bot.front, E.PERSONAS.rusher.battle.front);
+  assert.equal(practice[0].cfg.players[1].bot, E.MONSTER_BOT, '중립 몬스터는 그대로');
+  // 상점 성향을 따로 주지 않으면 성격의 성향(장사꾼은 저축형)
+  E.runShopBot(g, 1, {});
+  assert.ok(g.players[1].gold >= 0);
 });

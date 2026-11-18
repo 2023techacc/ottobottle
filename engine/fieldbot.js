@@ -8,11 +8,16 @@ import {
   enemiesOf, isEnemy, distance,
 } from './field.js';
 
-/** 봇 난이도: 반응 지연(밀리초)과 엉뚱한 카드를 낼 확률 */
+/**
+ * 봇 난이도: 반응 지연(밀리초), 엉뚱한 카드를 낼 확률, 마나를 모으는 판단(plan)을 쓰는지.
+ * 입문·쉬움은 마나를 모으지 않고 마나가 모자란 카드도 다시 뽑기로 버리는 예전 판단을 쓴다.
+ * 반응을 0~0.1초로 더 줄인 단계도 시험했는데 어려움과 승률이 같아서(47:53) 뺐다.
+ */
 export const BOT_LEVELS = {
-  easy: { reactMin: 800, reactMax: 1600, mistake: 0.3 },
-  normal: { reactMin: 300, reactMax: 1000, mistake: 0.05 },
-  hard: { reactMin: 100, reactMax: 300, mistake: 0 },
+  beginner: { name: '입문', reactMin: 1500, reactMax: 2500, mistake: 0.5, plan: false },
+  easy: { name: '쉬움', reactMin: 800, reactMax: 1600, mistake: 0.3, plan: false },
+  normal: { name: '보통', reactMin: 300, reactMax: 1000, mistake: 0.05 },
+  hard: { name: '어려움', reactMin: 100, reactMax: 300, mistake: 0 },
 };
 
 /**
@@ -90,7 +95,10 @@ function thinkSmart(state, p, rng, o) {
   const value = (u) => (u.token ? 0.5 : CARDS[u.defId].cost * u.stars);
   const cands = [];
   const add = (score, c, target) => {
-    if (score > 0) cands.push({ score, k: cost(c), action: { type: 'play', uid: c.uid, target } });
+    if (score <= 0) return;
+    // 봇 성격(personas.js): 유닛·주문을 얼마나 좋아하는지, 좋아하는 카드
+    score += (CARDS[c.id].type === 'unit' ? o.unitBias || 0 : o.spellBias || 0) + 0.5 * ((o.likes && o.likes[c.id]) || 0);
+    cands.push({ score: Math.max(0.1, score), k: cost(c), action: { type: 'play', uid: c.uid, target } });
   };
 
   for (const c of P.hand) {
@@ -103,7 +111,7 @@ function thinkSmart(state, p, rng, o) {
     if (o.avoid && o.avoid.includes(c.id)) continue; // 시뮬레이션용: 이 카드는 내지 않는다
 
     if (def.type === 'unit') {
-      const place = bestSpot(state, p, c, mine, theirs, threatened);
+      const place = bestSpot(state, p, c, mine, theirs, threatened, o);
       if (!place) continue;
       let score = place.replace !== undefined ? 4 + k : 10 + k * 1.5;
       if (mine.length < theirs.length) score += 3;
@@ -136,7 +144,7 @@ function thinkSmart(state, p, rng, o) {
           const sc = hit.length + hit.filter((x) => x.owner === lead).length * 0.5;
           if (!best || sc > best.sc + 1e-9) best = { sc, u, n: hit.length };
         }
-        if (best && best.n >= 3) add(4 + 3 * best.sc, c, { unitId: best.u.id });
+        if (best && best.n >= 2) add(4 + 3 * best.sc, c, { unitId: best.u.id });
         break;
       }
       case 'decree': {
@@ -152,15 +160,29 @@ function thinkSmart(state, p, rng, o) {
       }
       case 'purify': {
         const armored = theirs.find((u) => u.buffs.some((b) => b.kind === 'armor'));
-        // 갑옷만 지운다 (다른 강화는 짧아서 2마나 값을 못 했다)
-        if (armored) add(6, c, { unitId: armored.id });
+        const kills = theirs.filter((u) => u.hp <= def.damage).sort((a, b) => pri(b) - pri(a) || hp6(b) - hp6(a));
+        if (armored) add(9, c, { unitId: armored.id });
+        else if (kills.length) add(10 + kills[0].maxHp / 4 + bonus(kills[0]), c, { unitId: kills[0].id });
+        else if (theirs.length && P.mana >= P.maxMana - 1) add(3, c, { unitId: [...theirs].sort((a, b) => pri(b) - pri(a) || hp6(a) - hp6(b))[0].id });
         break;
       }
       case 'disrupt': {
-        const best = theirs
-          .filter((u) => u.ult && !u.telegraphing && u.gauge >= 50 && u.silenceUntil <= t)
-          .sort((a, b) => pri(b) - pri(a) || (b.ult.damage || 0) - (a.ult.damage || 0))[0];
-        if (best) add(5 + (best.ult.damage ? 4 : 0) + bonus(best), c, { unitId: best.id });
+        // 기절: 필살기가 곧 터질 유닛을 먼저, 없으면 내 유닛과 싸우고 있는 가장 센 적 유닛
+        const awake = theirs.filter((u) => u.stunUntil <= t);
+        const kill = awake.filter((u) => u.hp <= def.damage).sort((a, b) => pri(b) - pri(a) || value(b) - value(a) || hp6(b) - hp6(a))[0];
+        if (kill) {
+          add(11 + kill.maxHp / 4 + bonus(kill), c, { unitId: kill.id });
+          break;
+        }
+        const ult = awake.filter((u) => u.ult && u.ult.damage && !u.telegraphing && u.gauge >= 50)
+          .sort((a, b) => pri(b) - pri(a) || b.gauge - a.gauge)[0];
+        if (ult) {
+          add(10 + bonus(ult), c, { unitId: ult.id });
+          break;
+        }
+        const fighting = awake.filter((e) => mine.some((u) => distance(u, e) <= u.range + e.radius + 0.5));
+        const best = fighting.sort((a, b) => pri(b) - pri(a) || value(b) - value(a) || hp6(b) - hp6(a))[0];
+        if (best && value(best) >= 3) add(4 + Math.min(4, value(best)) + bonus(best), c, { unitId: best.id });
         break;
       }
       case 'retreat': {
@@ -182,9 +204,11 @@ function thinkSmart(state, p, rng, o) {
         break;
       }
       case 'awaken': {
-        // 피해를 주는 필살기(화염술사·거신)만. 궁수의 세 발 쏘기에 쓰면 3마나 값을 못 했다
-        const best = mine.filter((u) => u.ult && !u.telegraphing && u.gauge <= 40 && u.ult.damage).sort((a, b) => b.ult.damage - a.ult.damage)[0];
-        if (best) add(8, c, { unitId: best.id });
+        // 피해를 주는 필살기(화염술사·거신)를 먼저, 없으면 싸우고 있는 궁수의 세 발 쏘기
+        const best = mine.filter((u) => u.ult && !u.telegraphing && !u.tripleShot && u.gauge <= 40)
+          .sort((a, b) => (b.ult.damage || 0) - (a.ult.damage || 0) || a.gauge - b.gauge)[0];
+        if (best && best.ult.damage) add(8, c, { unitId: best.id });
+        else if (best && theirs.some((e) => distance(best, e) <= best.range + e.radius)) add(4, c, { unitId: best.id });
         break;
       }
       case 'armor': {
@@ -194,13 +218,9 @@ function thinkSmart(state, p, rng, o) {
         break;
       }
       case 'phalanx': {
-        let n = mine.filter((u) => u.ranged && threatened(u.x, u.y, u.radius)).length;
-        if (!n && o.plan) {
-          // 범위 필살기(화염술사·거신)의 게이지가 거의 찬 적 유닛 근처에 내 원거리 유닛이 있다
-          const soon = theirs.filter((e) => e.ult && e.ult.damage && !e.telegraphing && e.gauge >= 75 && e.silenceUntil <= t);
-          n = mine.filter((u) => u.ranged && soon.some((e) => distance(e, u) <= e.range + r.blastRadius + u.radius + 1)).length;
-        }
-        if (n >= 1) add(10 + 2 * n, c, null);
+        // 내 근접 유닛 전체 체력 +14: 근접 유닛이 둘 이상일 때 (많을수록 좋다)
+        const n = mine.filter((u) => !u.ranged).length;
+        if (n >= 2) add(4 + 3 * n, c, null);
         break;
       }
       case 'scout':
@@ -295,7 +315,7 @@ function planRedraw(state, p, cands, cost) {
 }
 
 /** 유닛을 소환할 배치 칸. 근접은 앞줄에서 적과 가까운 쪽, 원거리는 뒷줄. */
-function bestSpot(state, p, c, mine, theirs, threatened) {
+function bestSpot(state, p, c, mine, theirs, threatened, o = {}) {
   const def = CARDS[c.id];
   if (mine.length >= state.rules.unitCap) {
     const value = (u) => (u.card ? CARDS[u.defId].cost * u.stars : 0) + u.hp / u.maxHp;
@@ -327,7 +347,7 @@ function bestSpot(state, p, c, mine, theirs, threatened) {
       s -= distance(e, focus) * 0.15;
       if (foeClose) s -= 6;
     } else {
-      s += e.row * 4; // 앞줄일수록 좋다
+      s += e.row * (4 + (o.front || 0)); // 앞줄일수록 좋다 (성격에 따라 더 앞으로, 또는 본진 가까이)
       s -= distance(e, focus) * 0.5;
     }
     if (wantsNeighbors) s += 2 * near;

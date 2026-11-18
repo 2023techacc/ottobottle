@@ -31,40 +31,40 @@ const card = (id, name, type, tier, cost, target, text, extra = {}) => ({
 
 export const CARDS = {
   // ── 유닛 ─────────────────────────────────────────────
-  shield: unit('shield', '방패병', 1, 1, 2, 14, 1200, false, {
+  shield: unit('shield', '방패병', 1, 1, 2, 9, 1200, false, {
     keywords: ['guard'], diamond: 'guard', text: '◆수호: 가까이 있는 아군이 받는 피해의 20%를 대신 받는다',
   }),
   rats: unit('rats', '쥐 떼', 1, 1, 1, 4, 600, false, {
     keywords: ['split'], diamond: 'split', text: '◆분열: 쓰러지면 능력치가 절반인 복제 2개가 나온다',
   }),
-  bat: unit('bat', '흡혈 박쥐', 1, 2, 3, 8, 900, false, {
+  bat: unit('bat', '흡혈 박쥐', 1, 2, 3, 10, 900, false, {
     keywords: ['lifesteal'], diamond: 'lifesteal', text: '◆흡혈: 준 피해의 30%만큼 회복한다',
   }),
-  archer: unit('archer', '견습 궁수', 1, 2, 3, 6, 1000, true, {
+  archer: unit('archer', '견습 궁수', 1, 2, 3, 8, 1000, true, {
     text: '필살기: 다음 공격이 3발로 나간다',
     ult: { kind: 'tripleShot', gaugeAtk: 25, gaugeHit: 10 },
   }),
-  dagger: unit('dagger', '그림자 단검', 2, 3, 5, 9, 1100, false, {
+  dagger: unit('dagger', '그림자 단검', 2, 3, 5, 12, 1100, false, {
     keywords: ['assassin'], diamond: 'assassin', text: '◆암살: 적 원거리 유닛부터 노린다',
   }),
-  frostwitch: unit('frostwitch', '서리 마녀', 2, 3, 3, 10, 1300, true, {
+  frostwitch: unit('frostwitch', '서리 마녀', 2, 3, 4, 14, 1300, true, {
     keywords: ['frost'], text: '냉기: 공격한 대상의 공격 간격 +15% (2초, 2번까지 중첩)',
   }),
-  lancer: unit('lancer', '창기병', 3, 4, 6, 18, 1500, false, {
+  lancer: unit('lancer', '창기병', 3, 4, 7, 22, 1500, false, {
     keywords: ['pierce'], diamond: 'pierce', text: '◆관통: 표적 바로 뒤의 적에게도 50% 피해',
   }),
-  pyro: unit('pyro', '화염술사', 4, 5, 4, 16, 1400, true, {
-    text: '필살기(전조 1초): 표적 주변 범위에 피해 20',
-    ult: { kind: 'cross', damage: 20, telegraphMs: 1000, gaugeAtk: 20, gaugeHit: 10 },
+  pyro: unit('pyro', '화염술사', 4, 4, 5, 20, 1400, true, {
+    text: '필살기(전조 1초): 표적 주변 범위에 피해 28',
+    ult: { kind: 'cross', damage: 28, telegraphMs: 1000, gaugeAtk: 20, gaugeHit: 10 },
   }),
-  colossus: unit('colossus', '거신', 5, 8, 10, 60, 2200, false, {
+  colossus: unit('colossus', '거신', 5, 6, 10, 70, 2200, false, {
     text: '받는 군중 제어 절반. 필살기(전조 1.2초): 자기 주변 넓은 범위에 피해 25',
     ccResist: 0.5,
     ult: { kind: 'slam', damage: 25, telegraphMs: 1200, gaugeAtk: 20, gaugeHit: 5 },
   }),
 
   // ── 2026-11-17에 더한 유닛 ──────────────────────────
-  turtle: unit('turtle', '가시 거북', 2, 3, 2, 22, 1300, false, {
+  turtle: unit('turtle', '가시 거북', 2, 3, 2, 16, 1300, false, {
     keywords: ['thorns'], diamond: 'thorns', text: '◆가시: 근접 공격을 받을 때마다 공격자에게 피해 1',
   }),
   banner: unit('banner', '깃발병', 2, 2, 2, 10, 1000, false, {
@@ -74,7 +74,7 @@ export const CARDS = {
     keywords: ['lastwords'], text: '유언: 쓰러질 때 주변(반지름 2)의 적 모두에게 피해 4',
     deathDamage: 8, deathRadius: 2,
   }),
-  hammer: unit('hammer', '망치 기사', 3, 4, 5, 20, 1600, false, {
+  hammer: unit('hammer', '망치 기사', 3, 4, 6, 28, 1600, false, {
     keywords: ['knockback'], text: '넉백: 공격한 대상을 1.5만큼 밀어낸다',
     knockback: 1.5,
   }),
@@ -88,49 +88,51 @@ export const CARDS = {
   }),
 
   // ── 주문 ─────────────────────────────────────────────
-  firebolt: card('firebolt', '화염탄', 'spell', 1, 1, 'enemyUnit', '적 유닛 하나에 피해 6. 연계: 피해 10', {
-    keywords: ['combo'], damage: 6, comboDamage: 10,
+  firebolt: card('firebolt', '화염탄', 'spell', 1, 1, 'enemyUnit', '적 유닛 하나에 피해 7. 연계: 피해 12', {
+    keywords: ['combo'], damage: 7, comboDamage: 12,
   }),
-  retreat: card('retreat', '후퇴', 'spell', 1, 1, 'allyMove', '내 유닛 하나를 내 배치 칸으로 옮기고 체력 5 회복', {
-    heal: 5,
+  retreat: card('retreat', '후퇴', 'spell', 1, 0, 'allyMove', '내 유닛 하나를 내 배치 칸으로 옮기고 체력 20 회복', {
+    heal: 20,
   }),
-  purify: card('purify', '정화', 'spell', 2, 2, 'enemyUnit', '적 유닛 하나의 강화를 모두 지운다'),
-  chain: card('chain', '연쇄 번개', 'spell', 3, 4, 'enemyUnit', '적 유닛 최대 3개에 차례로 피해 10/7/5', {
-    chainDamage: [10, 7, 5],
+  purify: card('purify', '정화', 'spell', 2, 1, 'enemyUnit', '적 유닛 하나의 강화를 모두 지우고 피해 7', {
+    damage: 7,
   }),
-  blizzard: card('blizzard', '눈보라', 'spell', 2, 3, 'enemyUnit', '적 유닛 하나와 그 주변(반지름 2.2)의 적 모두에게 피해 4, 감속', {
-    damage: 4, radius: 2.2,
+  chain: card('chain', '연쇄 번개', 'spell', 3, 3, 'enemyUnit', '적 유닛 최대 3개에 차례로 피해 12/9/6', {
+    chainDamage: [12, 9, 6],
+  }),
+  blizzard: card('blizzard', '눈보라', 'spell', 2, 2, 'enemyUnit', '적 유닛 하나와 그 주변(반지름 2.2)의 적 모두에게 피해 8, 감속', {
+    damage: 8, radius: 2.2,
   }),
 
   // ── 강화 ─────────────────────────────────────────────
-  warcry: card('warcry', '전투 함성', 'buff', 1, 2, 'none', '근접 유닛 전체 공격 +2 (6초)', {
-    amount: 2, durationMs: 6000,
+  warcry: card('warcry', '전투 함성', 'buff', 1, 1, 'none', '근접 유닛 전체 공격 +3 (8초)', {
+    amount: 3, durationMs: 8000,
   }),
-  awaken: card('awaken', '각성', 'buff', 2, 3, 'allyUltUnit', '유닛 하나의 필살기 게이지 +60%', {
-    amount: 60,
+  awaken: card('awaken', '각성', 'buff', 2, 1, 'allyUltUnit', '유닛 하나의 필살기 게이지를 가득 채우고, 그 유닛의 공격 +2 (그 유닛이 쓰러질 때까지)', {
+    amount: 100, atk: 2,
   }),
-  armor: card('armor', '강철 갑옷', 'buff', 2, 3, 'allyUnit', '유닛 하나 체력 +12, 그 유닛이 쓰러질 때까지', {
-    amount: 12,
+  armor: card('armor', '강철 갑옷', 'buff', 2, 2, 'allyUnit', '유닛 하나 체력 +25, 그 유닛이 쓰러질 때까지', {
+    amount: 25,
   }),
-  phalanx: card('phalanx', '방진', 'buff', 3, 4, 'none', '내 원거리 유닛이 3초간 받는 범위 피해 50% 감소', {
-    amount: 0.5, durationMs: 3000,
+  phalanx: card('phalanx', '방진', 'buff', 3, 2, 'none', '내 근접 유닛 전체 체력 +14, 그 유닛이 쓰러질 때까지', {
+    amount: 14,
   }),
 
   // ── 운영 ─────────────────────────────────────────────
   scout: card('scout', '정찰', 'ops', 1, 0, 'none', '카드 2장 뽑기. 일회', {
     keywords: ['once'], draw: 2,
   }),
-  crystal: card('crystal', '마나 결정', 'ops', 1, 1, 'none', '마나 +3. 숙성', {
-    keywords: ['aging'], amount: 3,
+  crystal: card('crystal', '마나 결정', 'ops', 1, 1, 'none', '마나 +4. 숙성', {
+    keywords: ['aging'], amount: 4,
   }),
-  supply: card('supply', '보급선', 'ops', 2, 2, 'none', '다음에 내는 유닛 2장의 비용 −1. ◆순환', {
-    keywords: ['cycle'], diamond: 'cycle', count: 2, amount: 1,
+  supply: card('supply', '보급선', 'ops', 2, 1, 'none', '다음에 내는 유닛 3장의 비용 −1. ◆순환', {
+    keywords: ['cycle'], diamond: 'cycle', count: 3, amount: 1,
   }),
-  muster: card('muster', '징집령', 'ops', 3, 3, 'none', '덱에서 비용이 가장 낮은 유닛 카드 2장을 손패로 가져온다', {
+  muster: card('muster', '징집령', 'ops', 3, 1, 'none', '덱에서 비용이 가장 낮은 유닛 카드 2장을 손패로 가져온다', {
     count: 2,
   }),
-  stockpile: card('stockpile', '비축', 'ops', 3, 2, 'none', '이번 전투의 마나 최대치 +1. 일회', {
-    keywords: ['once'], amount: 1,
+  stockpile: card('stockpile', '비축', 'ops', 3, 2, 'none', '이번 전투의 마나 회복이 40% 빨라진다. 일회', {
+    keywords: ['once'], amount: 0.4,
   }),
 
   // ── 지휘관 고유 카드 ─────────────────────────────────
@@ -141,11 +143,11 @@ export const CARDS = {
   catalyst: card('catalyst', '촉매', 'ops', 1, 1, 'handFused', '손패의 융합 카드 하나의 비용이 0이 된다', {
     commanderCard: 'alchemist',
   }),
-  disrupt: card('disrupt', '교란', 'spell', 2, 3, 'enemyUnit', '적 유닛 하나를 2초간 침묵', {
-    commanderCard: 'spy', durationMs: 2000,
+  disrupt: card('disrupt', '교란', 'spell', 2, 1, 'enemyUnit', '적 유닛 하나에 피해 6, 2초 동안 기절시키고(움직이지도 치지도 못한다) 필살기 게이지를 비운다', {
+    commanderCard: 'spy', durationMs: 2000, damage: 6,
   }),
-  decree: card('decree', '포고', 'ops', 2, 3, 'enemyUnit', '적 유닛 하나를 6초 동안 표적으로 지목한다: 내 유닛 전체가 그 유닛부터 노리고, 그 유닛이 받는 피해 +25%', {
-    commanderCard: 'lord', durationMs: 6000, amount: 0.25,
+  decree: card('decree', '포고', 'ops', 2, 1, 'enemyUnit', '적 유닛 하나를 6초 동안 지목한다: 그 유닛이 받는 피해 +100%, 그 유닛이 사거리 안에 있는 내 유닛은 그 유닛부터 친다', {
+    commanderCard: 'lord', durationMs: 6000, amount: 1,
   }),
 };
 
@@ -157,29 +159,33 @@ export const COPIES_BY_TIER = { 1: 12, 2: 10, 3: 8, 4: 6, 5: 4 };
 
 export const COMMANDERS = {
   general: {
-    id: 'general', name: '장군', passive: '근접 유닛 체력 +10%', card: 'phalanx',
+    id: 'general', name: '장군', passive: '근접 유닛 체력 +5%', card: 'phalanx',
+    meleeHp: 0.05,
     deck: ['shield', 'shield', 'shield', 'lancer', 'lancer', 'archer', 'warcry', 'phalanx'],
     fusions: 3,
   },
   merchant: {
-    id: 'merchant', name: '상인', passive: '라운드당 골드 +1, 라운드 첫 리롤 무료', card: 'invest',
+    id: 'merchant', name: '상인', passive: '라운드당 골드 +2', card: 'invest',
+    goldPerRound: 2,
     deck: ['rats', 'rats', 'shield', 'bat', 'archer', 'scout', 'crystal', 'invest'],
     fusions: 3,
   },
   alchemist: {
-    id: 'alchemist', name: '연금술사', passive: '융합 5회, 융합 카드 비용 −1', card: 'catalyst',
+    id: 'alchemist', name: '연금술사', passive: '융합 카드 비용 −1', card: 'catalyst',
     deck: ['firebolt', 'firebolt', 'archer', 'archer', 'shield', 'scout', 'crystal', 'catalyst'],
-    fusions: 5,
+    fusions: 3,
   },
   spy: {
-    id: 'spy', name: '첩보원', passive: '상대가 고른 시작 카드를 미리 본다, 시그니처 칸 2개', card: 'disrupt',
+    id: 'spy', name: '첩보원', passive: '상대가 고른 시작 카드를 미리 본다, 전투 시작 손패 +1 · 마나 +1, 시그니처 칸 2개', card: 'disrupt',
     seesOpening: true,
+    startHand: 1,
+    startMana: 1,
     signatureSlots: 2,
     deck: ['dagger', 'dagger', 'bat', 'shield', 'firebolt', 'firebolt', 'retreat', 'disrupt'],
     fusions: 3,
   },
   lord: {
-    id: 'lord', name: '군주', passive: '난전 형식에서 받는 HP 피해 −30% (1:1에는 영향 없음)', card: 'decree',
+    id: 'lord', name: '군주', passive: '받는 HP 피해 −25% (1:1은 −40%)', card: 'decree',
     deck: ['shield', 'shield', 'lancer', 'bat', 'archer', 'armor', 'warcry', 'decree'],
     fusions: 3,
   },
