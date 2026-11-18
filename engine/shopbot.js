@@ -23,6 +23,44 @@ export function shopBotOrder(game) {
   return [...game.players].sort((A, B) => spy(A) - spy(B) || A.idx - B.idx).map((P) => P.idx);
 }
 
+/**
+ * 첩보원의 빠른 대응 (미리 돌려 보지 않는다): 이번 라운드 상대들이 고른 시작 카드를 보고 카드마다 점수를 더해 고른다.
+ * 상대가 원거리로 시작하면 암살, 싼 근접 유닛을 몰아 내면 범위 공격·가시, 비싼 유닛이면 화염탄·교란·포고,
+ * 범위 주문으로 시작하면 체력이 높은 유닛. 기본 점수는 tempo(지금 마나로 낼 수 있는 유닛)와 같다.
+ */
+export function spyCounterOpening(game, p) {
+  const P = game.players[p];
+  const n = openingCount(game, p);
+  if (n <= 0) return null;
+  const battle = roundBattles(game).find((b) => b.sides.includes(p));
+  if (!battle || battle.kind === 'practice' || battle.kind === 'boss') return null;
+  const seat = battle.sides.indexOf(p);
+  const team = (i) => (battle.kind === 'alliance' ? Math.floor(i / 2) : i);
+  const seen = battle.cfg.players
+    .filter((pc, i) => team(i) !== team(seat))
+    .flatMap((pc) => (pc.opening || []).map((i) => pc.deck[i]).filter(Boolean))
+    .map((c) => CARDS[c.id]);
+  if (!seen.length) return null;
+  const ranged = seen.filter((d) => d.type === 'unit' && d.ranged).length;
+  const swarm = seen.filter((d) => d.type === 'unit' && !d.ranged && d.cost <= 2).length;
+  const big = seen.filter((d) => d.type === 'unit' && d.cost >= 4).length;
+  const aoe = seen.filter((d) => ['blizzard', 'chain', 'pyro'].includes(d.id)).length;
+  const startMana = game.battleRules.startMana ?? 3;
+  const scored = P.deck.map((c, index) => {
+    const def = CARDS[c.id];
+    if (def.matchOnly) return { index, s: -99 };
+    let sc = def.type === 'unit' && def.cost <= startMana ? 5 + def.cost * (c.stars || 1) : 0;
+    const kw = [...def.keywords, c.fuse].filter(Boolean);
+    if (ranged && kw.includes('assassin')) sc += 4;
+    if (swarm >= 2 && ['blizzard', 'chain', 'bomber', 'turtle'].includes(c.id)) sc += 5;
+    if (swarm >= 2 && kw.includes('thorns')) sc += 2;
+    if (big && ['firebolt', 'disrupt', 'decree'].includes(c.id)) sc += 4;
+    if (aoe && def.type === 'unit' && def.hp >= 14) sc += 2;
+    return { index, s: sc };
+  });
+  return scored.filter((x) => x.s > 0).sort((a, b) => b.s - a.s || a.index - b.index).slice(0, n).map((x) => x.index);
+}
+
 /** 이 전투에서 자리 i의 점수 (이기면 1, 지면 0. 난투장은 순위에 따라) */
 function battleScore(state, i) {
   const r = state.result;
@@ -225,13 +263,13 @@ export function runShopBot(game, p, opts = {}) {
 
   for (const u of upgradable(game, p)) upgrade(game, p, u.id, u.stars);
 
-  // 시작 카드 고르기. spyInfo: true면 첩보원은 상대가 고른 시작 카드를 보고 미리 돌려 본다.
-  // 경기 결과가 오차 안에서만 달라지고 시간이 6~7배 들어서 기본은 끈다 (README "첩보원 봇").
+  // 시작 카드 고르기. 첩보원은 상대가 고른 시작 카드를 보고 고른다:
+  //   기본은 빠른 대응(spyCounterOpening), spyInfo: true면 미리 돌려 보기(spyOpening, 6~7배 느리다), spyInfo: false면 쓰지 않는다.
   const deck = P.deck.map((c) => ({ id: c.id, stars: c.stars, fuse: c.fuse }));
   let picks = pickOpening(deck, openingCount(game, p), opts.openingPolicy || 'tempo', null, game.battleRules.startMana ?? 3);
   setOpening(game, p, picks.map((i) => P.deck[i].key));
-  if (COMMANDERS[P.commander].seesOpening && opts.spyInfo === true) {
-    picks = spyOpening(game, p, opts.spySims ?? 6) || picks;
+  if (COMMANDERS[P.commander].seesOpening && opts.spyInfo !== false) {
+    picks = (opts.spyInfo === true ? spyOpening(game, p, opts.spySims ?? 6) : spyCounterOpening(game, p)) || picks;
     setOpening(game, p, picks.map((i) => P.deck[i].key));
   }
 }

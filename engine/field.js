@@ -44,6 +44,8 @@ export const FIELD_STATS = Object.freeze({
 
 /** 유닛 전투의 기본 규칙 수치 (DEFAULT_RULES 위에 덮어쓴다) */
 export const FIELD_RULES = Object.freeze({
+  // 강화한 카드는 별 하나당 비용 +1 (2성 +1, 3성 +2). 2성이 쉬운 싼 카드가 경기에서 너무 셌다 (README "싼 근접 덱")
+  starCost: 1,
   commanderHp: 40,
   unitAtkMult: 0.5,
   unitHpMult: 1.25,
@@ -353,7 +355,8 @@ export function overtimeMult(state) {
 
 export function currentAtk(state, u) {
   let atk = u.atk;
-  for (const b of u.buffs) if (b.kind === 'atk') atk += b.amount;
+  // 공격 강화(전투 함성·각성)도 집결처럼 유닛 공격 배율을 따른다 (예전에는 배율 없이 더해서 싼 근접 유닛이 몇 배로 셌다)
+  for (const b of u.buffs) if (b.kind === 'atk') atk += b.amount * state.rules.unitAtkMult;
   if (hasKw(u, 'rally')) atk += state.rules.rallyAtk * state.rules.unitAtkMult * nearbyAllies(state, u).length;
   return atk * overtimeMult(state);
 }
@@ -371,10 +374,10 @@ export function effectiveCost(state, p, c) {
   const def = CARDS[c.id];
   const r = state.rules;
   if (c.zeroCost) return 0;
-  let cost = def.cost;
+  let cost = def.cost + ((c.stars || 1) - 1) * (r.starCost || 0); // 강화한 카드는 별 하나당 비용 +starCost
   if (def.keywords.includes('aging')) cost -= Math.floor((state.timeMs - c.drawnAt) / r.agingIntervalMs);
   if (def.type === 'unit' && P.unitDiscount.count > 0) cost -= P.unitDiscount.amount;
-  if (c.fuse && P.commander === 'alchemist') cost -= 1;
+  if (c.fuse) cost -= COMMANDERS[P.commander].fusedDiscount || 0; // 융합 카드 할인 (지금은 쓰는 지휘관이 없다)
   return Math.max(0, cost);
 }
 

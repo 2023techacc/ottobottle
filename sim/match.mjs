@@ -5,7 +5,7 @@
 //   node sim/match.mjs --mode rank8         8인 경기 60판
 //   node sim/match.mjs --games 1000
 //   node sim/match.mjs --econ "{\"playerHp\":60}"     경제 수치를 바꿔서
-//   node sim/match.mjs --spy-info on        첩보원 봇이 상대 시작 카드를 보고 미리 돌려 본다 (6~7배 느리다)
+//   node sim/match.mjs --spy-info on        첩보원 봇이 상대 시작 카드로 미리 돌려 본다 (6~7배 느리다). off: 정보를 안 쓴다
 //   node sim/match.mjs --levels             플레이어마다 전투 봇 난이도를 무작위로 (난이도별 순위를 본다)
 //   node sim/match.mjs --personas           플레이어마다 봇 성격을 무작위로 (지휘관·상점 성향도 성격을 따른다. 성격별 순위를 본다)
 //
@@ -22,7 +22,8 @@ const N = E.MODES[MODE].players;
 const GAMES = Number(args.games || (MODE === 'duel' ? 300 : 60));
 const SEED = Number(args.seed || 1);
 const ECON = args.econ ? JSON.parse(args.econ) : {};
-const SPY_INFO = args['spy-info'] === 'on'; // --spy-info on: 첩보원 봇이 상대 시작 카드를 보고 미리 돌려 본다 (느리다)
+// --spy-info on: 첩보원 봇이 상대 시작 카드로 미리 돌려 본다 (느리다). off: 정보를 쓰지 않는다. 기본: 빠른 대응
+const SPY_INFO = args['spy-info'] === 'on' ? true : args['spy-info'] === 'off' ? false : undefined;
 const LEVELS = args.levels ? Object.keys(E.BOT_LEVELS) : null; // --levels: 플레이어마다 난이도를 무작위로
 const PERSONAS = args.personas ? E.PERSONA_IDS : null; // --personas: 플레이어마다 성격을 무작위로
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));

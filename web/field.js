@@ -28,12 +28,15 @@ function fillSelect(el, options, value) {
   if (value !== undefined) el.value = value;
 }
 
+/** 덱 카드의 마나 비용: 강화한 카드는 별 하나당 +starCost */
+const manaOf = (c) => E.CARDS[c.id].cost + ((c.stars || 1) - 1) * (E.Field.FIELD_RULES.starCost || 0);
+
 function deckChips(deck) {
   return E.deckSummary(deck)
     .sort((a, b) => E.CARDS[a.id].cost - E.CARDS[b.id].cost || a.id.localeCompare(b.id))
     .map((d) => {
       const def = E.CARDS[d.id];
-      return `<span class="chip ${def.type}" title="${esc(F.fieldText(d.id))}"><b>${def.cost}</b>${esc(E.cardLabel(d))}${d.n > 1 ? ` ×${d.n}` : ''}</span>`;
+      return `<span class="chip ${def.type}" title="${esc(F.fieldText(d.id))}"><b>${manaOf(d)}</b>${esc(E.cardLabel(d))}${d.n > 1 ? ` ×${d.n}` : ''}</span>`;
     })
     .join('');
 }

@@ -8,3 +8,4 @@ export * from './shopbot.js';
 export * as Field from './field.js';
 export * from './fieldbot.js';
 export * from './personas.js';
+export * from './ranked.js';

@@ -13,12 +13,15 @@ function fillSelect(el, options, value) {
   if (value !== undefined) el.value = value;
 }
 
+/** 덱 카드의 마나 비용: 강화한 카드는 별 하나당 +starCost */
+const manaOf = (c) => E.CARDS[c.id].cost + ((c.stars || 1) - 1) * (E.Field.FIELD_RULES.starCost || 0);
+
 function deckChips(deck) {
   return E.deckSummary(deck)
     .sort((a, b) => E.CARDS[a.id].cost - E.CARDS[b.id].cost || a.id.localeCompare(b.id))
     .map((d) => {
       const def = E.CARDS[d.id];
-      return `<span class="chip ${def.type}" title="${esc(E.Field.fieldText(d.id))}"><b>${def.cost}</b>${esc(E.cardLabel(d))}${d.n > 1 ? ` ×${d.n}` : ''}</span>`;
+      return `<span class="chip ${def.type}" title="${esc(E.Field.fieldText(d.id))}"><b>${manaOf(d)}</b>${esc(E.cardLabel(d))}${d.n > 1 ? ` ×${d.n}` : ''}</span>`;
     })
     .join('');
 }
@@ -64,6 +67,7 @@ function initMatch() {
   fillSelect($('mOpCommander'), [['random', '무작위'], ...cmds], 'random');
   fillSelect($('mBotPersona'), [['random', '봇마다 무작위'], ...E.PERSONA_IDS.map((id) => [id, E.PERSONAS[id].name])], 'random');
   $('mBotPersona').addEventListener('change', renderLobby);
+  $('mRanked').addEventListener('change', renderLobby);
   $('mSeed').value = String(1 + Math.floor(Math.random() * 99999));
   lobby.picks = E.botPicks(E.makeRng(7), lobbyEcon());
 
@@ -200,6 +204,48 @@ function initMatch() {
 
 // ───────────────────────── 사전 선택 ─────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// 랭크전: 모드마다 내 레이팅을 이 브라우저에 저장한다 (engine/ranked.js)
+// ─────────────────────────────────────────────────────────────
+
+const rankKey = (mode) => `ottobottle.ranked.${mode}`;
+function loadRank(mode) {
+  try {
+    const v = JSON.parse(localStorage.getItem(rankKey(mode)));
+    if (v && Number.isFinite(v.rating)) return v;
+  } catch { /* 저장소를 못 쓰면 처음 레이팅 */ }
+  return { rating: E.RANKED.start, games: 0 };
+}
+function saveRank(mode, v) {
+  try {
+    localStorage.setItem(rankKey(mode), JSON.stringify(v));
+  } catch { /* 저장하지 못해도 경기는 그대로 */ }
+}
+const rankText = (v) => `${E.tierOf(v.rating).name} ${v.rating}`;
+
+/** 랭크전이면 내 레이팅을 고친다. 내가 탈락했거나 경기가 끝났을 때 한 번. 아직 남은 봇은 나보다 위로 친다 */
+function finishRanked() {
+  const r = match && match.ranked;
+  if (!r || r.after) return;
+  const { game } = match;
+  const P = game.players[ME];
+  if (P.alive && game.phase !== 'over') return;
+  const place = (X) => X.place ?? 0; // 아직 살아 있는 봇은 0위 (나보다 위)
+  const ratings = game.players.map((X, i) => (i === ME ? r.before.rating : E.BOT_LEVEL_RATING[match.levels[i]]));
+  const places = game.players.map((X, i) => (i === ME ? P.place : place(X)));
+  const games = game.players.map((X, i) => (i === ME ? r.before.games : Infinity));
+  const delta = E.rateMatch(ratings, places, games)[ME];
+  r.after = { rating: Math.max(E.RANKED.floor, r.before.rating + delta), games: r.before.games + 1 };
+  r.delta = delta;
+  saveRank(r.mode, r.after);
+}
+const rankLine = () => {
+  const r = match && match.ranked;
+  if (!r || !r.after) return '';
+  const up = E.tierOf(r.after.rating).id !== E.tierOf(r.before.rating).id;
+  return ` · 랭크 ${rankText(r.before)} → ${rankText(r.after)} (${r.delta >= 0 ? '+' : ''}${r.delta})${up ? (r.delta > 0 ? ' 승급!' : ' 강등') : ''}`;
+};
+
 function renderLobby() {
   const mode = E.MODES[lobbyMode()];
   const econ = lobbyEcon();
@@ -222,6 +268,10 @@ function renderLobby() {
   $('mOpNote').textContent = many
     ? `상대는 봇 ${mode.players - 1}명이다. 지휘관은 봇의 성격을 따라 고른다. 라운드마다 결투, 난투장, 연합전, 보스 레이드가 돌아가며 나온다.`
     : '';
+  const rk = loadRank(mode.id || lobbyMode());
+  const ranked = $('mRanked').checked;
+  $('mBotLevel').disabled = ranked;
+  $('mRankNote').textContent = `내 랭크 (${E.MODES[lobbyMode()].name}): ${rankText(rk)} · ${rk.games}경기${rk.games < E.RANKED.placementGames ? ` (배치 ${rk.games}/${E.RANKED.placementGames})` : ''}. ${ranked ? '랭크전에서는 봇마다 내 레이팅 근처의 난이도가 정해지고, 결과로 레이팅이 오르내린다.' : '랭크전을 켜면 결과로 레이팅이 오르내린다.'}`;
   const pc = $('mBotPersona').value;
   $('mPersonaNote').textContent = pc === 'random'
     ? `성격: ${E.PERSONA_IDS.map((id) => E.PERSONAS[id].name).join(' · ')}. 성격마다 좋아하는 지휘관과 카드, 상점 성향, 전투 버릇이 다르다.`
@@ -241,6 +291,11 @@ function startMatch() {
   const players = [{ commander: $('mCommander').value, picks: lobby.picks, name: n > 2 ? '나' : undefined }];
   const styles = [null];
   const used = {};
+  // 랭크전: 봇마다 내 레이팅 근처(±120)에서 난이도를 고른다
+  const ranked = $('mRanked').checked;
+  const myRank = loadRank(mode);
+  const levels = [null];
+  for (let i = 1; i < n; i++) levels.push(ranked ? E.botLevelForRating(myRank.rating + (rng() * 2 - 1) * 120) : $('mBotLevel').value);
   for (let i = 1; i < n; i++) {
     // 봇마다 성격이 있다: 좋아하는 지휘관·카드, 상점 성향, 전투 버릇 (engine/personas.js)
     const choice = $('mBotPersona').value;
@@ -255,6 +310,8 @@ function startMatch() {
   match = {
     game: E.createGame({ seed, mode, players }),
     botLevel: $('mBotLevel').value,
+    levels, // 봇마다 전투 난이도
+    ranked: ranked ? { mode, before: myRank, after: null, delta: 0 } : null,
     styles,
     shopSeconds: Number($('mShopTime').value),
     sel: null,
@@ -298,6 +355,11 @@ function draftChoose(i) {
   E.draftPick(match.game, ME, i);
   if (match.game.phase === 'shop') beginShop();
   else renderDraft();
+}
+
+/** 봇은 자기 난이도와 성격으로 싸운다 (유령은 원래 주인의 것) */
+function assignBots(battles) {
+  return E.assignBattleBots(match.game, battles, (p) => match.levels[p] || match.botLevel);
 }
 
 function endMatch() {
@@ -528,7 +590,7 @@ function renderShop() {
       if (fuseBody && c !== fuseBody) cls.push(E.canFuse(game, ME, fuseBody.key, c.key).ok ? 'fusable' : 'dim');
       if (match.removeMode) cls.push('removable');
       const diamond = def.diamond && !c.fuse ? ` ◆${E.KEYWORD_NAMES[def.diamond]}` : '';
-      return `<span class="${cls.join(' ')}" data-key="${c.key}" role="button" title="${esc(def.text || '')}${diamond}"><b>${def.cost}</b>${esc(E.cardLabel(c))}${P.opening.includes(c.key) ? ' ✓' : ''}</span>`;
+      return `<span class="${cls.join(' ')}" data-key="${c.key}" role="button" title="${esc(def.text || '')}${diamond}"><b>${manaOf(c)}</b>${esc(E.cardLabel(c))}${P.opening.includes(c.key) ? ' ✓' : ''}</span>`;
     })
     .join('');
 
@@ -594,11 +656,9 @@ function goBattle() {
   const { game } = match;
   const info = E.roundInfo(game);
   const before = game.players.map((P) => ({ hp: P.hp, gold: P.gold }));
-  const battles = E.roundBattles(game);
+  const battles = assignBots(E.roundBattles(game));
   const mine = battles.find((b) => b.sides.includes(ME));
   seatMeFirst(mine);
-  // 봇은 고른 난이도와 자기 성격으로 싸운다 (유령은 원래 주인의 성격)
-  E.assignBattleBots(game, battles, () => match.botLevel);
   // 내가 끼지 않는 전투는 바로 계산한다
   for (const b of battles) if (b !== mine) b.state = E.runRoundBattle(b).state;
   const opts = {
@@ -645,7 +705,8 @@ function showRoundResult(summary, state, myGroup, before) {
   }
   const why = state.mode === 'field' ? endReason(state) : state.result.reason === 'commander' ? '지휘관이 쓰러졌다' : '시간이 다 됐다';
   const outs = summary.eliminated.length ? ` · 이번 라운드 탈락: ${summary.eliminated.map((p) => game.players[p].name).join(', ')}` : '';
-  $('rrDetail').textContent = `${FORMAT_NAMES[summary.format]} · ${(state.result.timeMs / 1000).toFixed(1)}초 · ${why}${outs}`;
+  finishRanked();
+  $('rrDetail').textContent = `${FORMAT_NAMES[summary.format]} · ${(state.result.timeMs / 1000).toFixed(1)}초 · ${why}${outs}${rankLine()}`;
 
   // 내 전투에 있던 플레이어들 (보스 레이드는 전원)
   const shown = summary.results
@@ -685,12 +746,12 @@ function watchRest() {
   const { game } = match;
   while (game.phase !== 'over' && game.round < 200) {
     runBotShops();
-    E.finishRound(game, E.roundBattles(game).map((b) => ({ ...b, state: E.runRoundBattle(b).state })));
+    E.finishRound(game, assignBots(E.roundBattles(game)).map((b) => ({ ...b, state: E.runRoundBattle(b).state })));
   }
   const P = game.players[ME];
   $('rrTitle').className = 'lose';
   $('rrTitle').textContent = `경기 종료 · ${P.place}위`;
-  $('rrDetail').textContent = `${game.round}라운드에 끝났다. 우승: ${playerLabel(game.players[game.winner] || game.players[game.placements[0]])}`;
+  $('rrDetail').textContent = `${game.round}라운드에 끝났다. 우승: ${playerLabel(game.players[game.winner] || game.players[game.placements[0]])}${rankLine()}`;
   $('rrStats').innerHTML = `<tr><th>순위</th><th></th><th>탈락 라운드</th></tr>${game.placements.map((p) => {
     const X = game.players[p];
     return `<tr class="${p === ME ? 'mine' : ''}"><td>${X.place}위</td><td>${esc(p === ME ? '나' : playerLabel(X))}</td><td>${X.eliminatedRound ? `${X.eliminatedRound}R` : '-'}</td></tr>`;

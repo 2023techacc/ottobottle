@@ -293,12 +293,12 @@ test('보급선: 다음 유닛 3장 비용 −1, ◆순환으로 1장 뽑는다'
   assert.equal(P.mana, 8 - 1 - 1 - 1 - 1);
 });
 
-test('촉매와 연금술사: 융합 카드 비용 −1, 촉매를 쓰면 0. 마나가 모자라면 낼 수 없다', () => {
+test('촉매: 손패의 융합 카드 비용이 0. 마나가 모자라면 낼 수 없다 (연금술사의 융합 카드 할인은 2026-11-18에 뺐다)', () => {
   const s = mk({ c0: 'alchemist' });
   const fused = give(s, 0, 'lancer', { fuse: 'lifesteal' });
   const plain = give(s, 0, 'lancer');
   const cat = give(s, 0, 'catalyst');
-  assert.equal(F.effectiveCost(s, 0, fused), 3);
+  assert.equal(F.effectiveCost(s, 0, fused), 4);
   assert.equal(F.effectiveCost(s, 0, plain), 4);
   assert.equal(play(s, 0, plain, { cell: 0 }).ok, false, '마나 3으로 4마나 카드는 못 낸다');
   assert.equal(play(s, 0, cat, { uid: plain.uid }).ok, false, '융합 카드만 고를 수 있다');
@@ -544,4 +544,15 @@ test('대난투: 봇끼리 끝까지 진행되고, 필드에 유닛이 많고, �
   assert.ok(peak >= 40, `필드 유닛 최대 ${peak}기`);
   assert.deepEqual([...a.result.ranks].sort((x, y) => x - y)[0], 0);
   for (const P of a.state.players) assert.equal(F.countCards(a.state, P.idx), cfg().players[P.idx].deck.length);
+});
+
+test('강화한 카드는 별 하나당 비용 +1 (기본 규칙). 공격 강화도 유닛 공격 배율을 따른다', () => {
+  const s = F.createField({ seed: 1, players: [{ commander: 'merchant', deck: filler() }, { commander: 'merchant', deck: filler() }] });
+  assert.equal(F.effectiveCost(s, 0, give(s, 0, 'rats', { stars: 2 })), 2);
+  assert.equal(F.effectiveCost(s, 0, give(s, 0, 'lancer', { stars: 3 })), 6);
+  assert.equal(F.effectiveCost(s, 0, give(s, 0, 'rats')), 1);
+  const u = dummy(s, 0, 0, -3, 'rats');
+  s.players[0].mana = 9;
+  play(s, 0, give(s, 0, 'warcry'));
+  near(F.currentAtk(s, u), (E.CARDS.rats.atk + 3) * 0.5, '공격 배율 ×0.5가 강화에도 붙는다');
 });

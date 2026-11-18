@@ -56,7 +56,7 @@ test('시작 상태: HP 40, 레벨 3, 시작 덱 8장, 첫 수입 5골드', () =
   const g = mk({ c1: 'merchant' });
   const [a, b] = g.players;
   assert.deepEqual([a.hp, a.level, a.deck.length, a.gold], [40, 3, 8, 5]);
-  assert.equal(b.gold, 7, '상인은 라운드당 +2');
+  assert.equal(b.gold, 8, '상인은 라운드당 +3');
   assert.equal(g.round, 1);
   assert.equal(E.roundInfo(g).format, 'practice');
   assert.equal(a.shop.length, 5);
@@ -121,7 +121,7 @@ test('리롤 2골드 (상인도 같다. 예전의 "라운드 첫 리롤 무료"�
   assert.equal(g.players[0].gold, 3);
   assert.equal(E.rerollCostOf(g, 1), 2);
   E.reroll(g, 1);
-  assert.equal(g.players[1].gold, 5);
+  assert.equal(g.players[1].gold, 6);
 });
 
 test('잠금: 다음 라운드에도 같은 상점이 유지된다 (무료)', () => {
@@ -225,11 +225,11 @@ test('강화: 합친 뒤 덱이 8장 밑으로 내려가면 안 된다', () => {
   assert.equal(E.upgrade(g, 0, 'shield', 1).ok, true);
 });
 
-test('융합: 재료의 ◆ 효과가 몸체에 붙고 재료는 사라진다. 경기당 3회 (연금술사도 3회)', () => {
+test('융합: 재료의 ◆ 효과가 몸체에 붙고 재료는 사라진다. 경기당 3회, 연금술사는 4회', () => {
   const g = mk({ c1: 'alchemist' });
   const P = g.players[0];
   assert.equal(P.fusionsLeft, 3);
-  assert.equal(g.players[1].fusionsLeft, 3);
+  assert.equal(g.players[1].fusionsLeft, 4);
   const [bat] = give(g, 0, 'bat');
   const [fb] = give(g, 0, 'firebolt');
   const [supply] = give(g, 0, 'supply');
@@ -345,7 +345,7 @@ test('투자: 그 전투에서 이기면 골드 +3', () => {
   const a = g.players[0];
   a.gold = 0;
   fakeRound(g, 0, [0, 0], [true, true]);
-  assert.equal(a.gold, 3 + 5 + 2, '투자 3 + 기본 5 + 상인 2');
+  assert.equal(a.gold, 3 + 5 + 3, '투자 3 + 기본 5 + 상인 3');
 });
 
 test('HP가 0이 되면 경기가 끝난다', () => {
@@ -490,4 +490,21 @@ test('봇 성격: 좋아하는 카드를 픽·드래프트·상점에서 더 고
   // 상점 성향을 따로 주지 않으면 성격의 성향(장사꾼은 저축형)
   E.runShopBot(g, 1, {});
   assert.ok(g.players[1].gold >= 0);
+});
+
+test('첩보원 봇의 빠른 대응: 미리 돌려 보지 않고, 상대가 원거리로 시작하면 암살 유닛을 시작 카드로 고른다', () => {
+  const g = mk({ c0: 'spy', c1: 'general' });
+  skipPractice(g);
+  const S = g.players[0];
+  const O = g.players[1];
+  const n = E.openingCount(g, 0);
+  // 상대는 궁수로 시작한다
+  const archer = O.deck.find((c) => c.id === 'archer');
+  E.setOpening(g, 1, [archer.key]);
+  const picks = E.spyCounterOpening(g, 0);
+  assert.equal(picks.length, Math.min(n, picks.length));
+  assert.ok(picks.some((i) => S.deck[i].id === 'dagger'), '그림자 단검(암살)');
+  // 상대가 아무것도 고르지 않았으면 대응하지 않는다
+  E.setOpening(g, 1, []);
+  assert.equal(E.spyCounterOpening(g, 0), null);
 });

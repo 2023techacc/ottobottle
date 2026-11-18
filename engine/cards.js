@@ -165,15 +165,15 @@ export const COMMANDERS = {
     fusions: 3,
   },
   merchant: {
-    id: 'merchant', name: '상인', passive: '라운드당 골드 +2', card: 'invest',
-    goldPerRound: 2,
+    id: 'merchant', name: '상인', passive: '라운드당 골드 +3', card: 'invest',
+    goldPerRound: 3,
     deck: ['rats', 'rats', 'shield', 'bat', 'archer', 'scout', 'crystal', 'invest'],
     fusions: 3,
   },
   alchemist: {
-    id: 'alchemist', name: '연금술사', passive: '융합 카드 비용 −1', card: 'catalyst',
+    id: 'alchemist', name: '연금술사', passive: '융합 4회', card: 'catalyst',
     deck: ['firebolt', 'firebolt', 'archer', 'archer', 'shield', 'scout', 'crystal', 'catalyst'],
-    fusions: 3,
+    fusions: 4,
   },
   spy: {
     id: 'spy', name: '첩보원', passive: '상대가 고른 시작 카드를 미리 본다, 전투 시작 손패 +1 · 마나 +1, 시그니처 칸 2개', card: 'disrupt',
