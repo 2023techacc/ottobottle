@@ -12,7 +12,8 @@ import { FIELD_RULES } from './field.js';
 /** 게임 모드. 인원과 HP·픽 수가 다르다. */
 export const MODES = Object.freeze({
   duel: { name: '1:1 랭크', players: 2, econ: { playerHp: 40, picks: 8 } },
-  rank8: { name: '8인 랭크', players: 8, econ: { playerHp: 100, picks: 5 } },
+  // 8인은 기획서 목표(약 15라운드)에 맞춰 피해가 빨리 오른다: 기본 피해 3에서 라운드마다 +1(최대 20), 남은 유닛 한 기당 3
+  rank8: { name: '8인 랭크', players: 8, econ: { playerHp: 100, picks: 5, damageMin: 3, damageEvery: 1, damageMax: 20, survivorDamage: 3 } },
 });
 
 /** 8인 로테이션 (기획서 예시). 1~2라운드는 연습, 15라운드부터는 남은 인원에 맞춘다. */
@@ -79,6 +80,8 @@ export const DEFAULT_ECON = Object.freeze({
   // 패배 피해: 기본 피해(라운드에 따라 2 → 8) + 승자 보드에 남은 유닛 수
   damageMin: 2,
   damageMax: 8,
+  damageEvery: 2, // 기본 피해가 1 오르는 라운드 간격
+  survivorDamage: 1, // 남은 유닛 한 기당 피해
 });
 
 /** 연습 라운드의 중립 몬스터 덱 */
@@ -238,7 +241,7 @@ export function roundInfo(game, round = game.round) {
     round,
     format,
     battlefield: quiet ? null : makeRng(hashSeed(game.seed, 'field', round)).pick(BATTLEFIELD_IDS),
-    baseDamage: quiet ? 0 : Math.min(e.damageMax, e.damageMin + Math.floor((n - 1) / 2)),
+    baseDamage: quiet ? 0 : Math.min(e.damageMax, e.damageMin + Math.floor((n - 1) / e.damageEvery)),
   };
 }
 
@@ -762,7 +765,7 @@ export function finishRound(game, battles) {
       }
       const w = res.winner;
       const l = 1 - w;
-      const dmg = info.baseDamage + res.survivors[w];
+      const dmg = info.baseDamage + Math.round(res.survivors[w] * e.survivorDamage);
       if (b.sides[w] !== null) {
         const W = game.players[b.sides[w]];
         bumpStreak(W, true);
@@ -790,7 +793,7 @@ export function finishRound(game, battles) {
         const won = wt < 0 ? null : teamOf(i) === wt;
         let dmg = 0;
         if (won === null) dmg = Math.ceil(info.baseDamage / 4);
-        else if (!won) dmg = Math.ceil((info.baseDamage + winnersUnits) / 2);
+        else if (!won) dmg = Math.ceil((info.baseDamage + winnersUnits * e.survivorDamage) / 2);
         hit(P, dmg);
         if (won === null) P.streak = 0;
         else bumpStreak(P, won);
@@ -809,7 +812,7 @@ export function finishRound(game, battles) {
       const P = game.players[p];
       const rank = res.ranks[i];
       const foes = res.survivors.reduce((sum, n, j) => (j !== i && !bs[j].dead ? sum + n : sum), 0);
-      let dmg = Math.ceil((info.baseDamage + foes) * pctTable[rank]);
+      let dmg = Math.ceil((info.baseDamage + foes * e.survivorDamage) * pctTable[rank]);
       if (P.commander === 'lord') dmg = Math.ceil(dmg * e.lordMeleeDamage);
       hit(P, dmg);
       const won = rank === 0 ? true : rank === lastRank ? false : null;

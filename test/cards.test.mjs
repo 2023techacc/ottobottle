@@ -433,6 +433,31 @@ test('난투장 1위 견제: 봇은 나보다 점수가 높은 상대 중 1위�
   assert.ok(a);
 });
 
+test('봇: 곧 낼 수 있는 비싼 카드를 위해 마나를 모으고, 마나만 모자란 카드는 다시 뽑기로 버리지 않는다', () => {
+  const decide = (s, opts = {}) => {
+    const bot = E.createFieldBot({ seed: 1, reactMin: 0, reactMax: 0, mistake: 0, ...opts });
+    bot.decide(s, 0);
+    return bot.decide(s, 0);
+  };
+  const setup = (hand, mana, maxMana) => {
+    const s = mk({ players: [{ commander: 'merchant', deck: filler('shield', 8) }, { commander: 'merchant', deck: filler('shield', 8) }] });
+    const P = s.players[0];
+    P.hand = [];
+    for (const id of hand) give(s, 0, id);
+    Object.assign(P, { mana, maxMana, manaTimer: 0 });
+    s.timeMs = 9000;
+    return s;
+  };
+  // 마나 3: 쥐 떼(1)를 내기보다 1마나만 더 모아서 창기병(4)을 낸다
+  assert.equal(decide(setup(['rats', 'lancer'], 3, 4)), null);
+  assert.equal(decide(setup(['rats', 'lancer'], 3, 4), { plan: false }).uid !== undefined, true, '예전 봇은 쥐 떼를 바로 낸다');
+  // 최대 마나 3: 창기병(4)은 몇 초 뒤면 낼 수 있으니 들고 있는다 (예전 봇은 다시 뽑기로 버렸다)
+  assert.equal(decide(setup(['lancer'], 1, 3)), null);
+  assert.equal(decide(setup(['lancer'], 1, 3), { plan: false }).type, 'redraw');
+  // 이번 전투에 못 낼 거신은 버린다
+  assert.equal(decide(setup(['colossus'], 1, 4)).type, 'redraw');
+});
+
 // ───────────────────────── 대난투 ─────────────────────────
 
 const ffaPlayers = (n, seed = 1) => {

@@ -19,7 +19,8 @@ export const BOT_LEVELS = {
  * @param {{style?:'smart'|'random', seed?:number, reactMin?:number, reactMax?:number, mistake?:number}} [opts]
  */
 export function createFieldBot(opts = {}) {
-  const o = { style: 'smart', ...BOT_LEVELS.normal, ...opts };
+  // plan: 마나를 모아 비싼 카드를 내고, 쓸 데 없는 카드만 다시 뽑는다 (false면 예전 봇)
+  const o = { style: 'smart', plan: true, saveMs: 2500, saveMargin: 2, urgent: 12, ...BOT_LEVELS.normal, ...opts };
   const rng = makeRng(o.seed ?? 1);
   let pending = null;
   return {
@@ -89,14 +90,17 @@ function thinkSmart(state, p, rng, o) {
   const value = (u) => (u.token ? 0.5 : CARDS[u.defId].cost * u.stars);
   const cands = [];
   const add = (score, c, target) => {
-    if (score > 0) cands.push({ score, action: { type: 'play', uid: c.uid, target } });
+    if (score > 0) cands.push({ score, k: cost(c), action: { type: 'play', uid: c.uid, target } });
   };
 
   for (const c of P.hand) {
     const def = CARDS[c.id];
     const k = cost(c);
-    if (k > P.mana) continue;
+    // 예전 봇(plan: false)은 지금 낼 수 있는 카드만 본다
+    if (k > P.mana && !o.plan) continue;
+    if (k > P.maxMana) continue;
     if (def.matchOnly && !state.stakes) continue;
+    if (o.avoid && o.avoid.includes(c.id)) continue; // 시뮬레이션용: 이 카드는 내지 않는다
 
     if (def.type === 'unit') {
       const place = bestSpot(state, p, c, mine, theirs, threatened);
@@ -132,22 +136,24 @@ function thinkSmart(state, p, rng, o) {
           const sc = hit.length + hit.filter((x) => x.owner === lead).length * 0.5;
           if (!best || sc > best.sc + 1e-9) best = { sc, u, n: hit.length };
         }
-        if (best && best.n >= 2) add(4 + 3 * best.sc, c, { unitId: best.u.id });
+        if (best && best.n >= 3) add(4 + 3 * best.sc, c, { unitId: best.u.id });
         break;
       }
       case 'decree': {
-        // 내 유닛이 둘 이상일 때, 가장 비싼 적 유닛을 지목한다 (앞서는 상대의 유닛을 먼저)
-        if (mine.length < 2 || !theirs.length) break;
+        // 이미 싸우고 있는 적 유닛 중에서(내 유닛 둘 이상이 곧 칠 수 있는 거리) 가장 비싼 것을 지목한다 (앞서는 상대의 유닛을 먼저).
+        // 멀리 있는 비싼 유닛을 지목하면 내 유닛이 진형을 버리고 쫓아가서 오히려 손해였다.
         if (P.decree && P.decree.until > t) break;
-        const target = [...theirs].sort((a, b) => pri(b) - pri(a) || value(b) - value(a) || hp6(b) - hp6(a))[0];
-        add(4 + mine.length + Math.min(4, value(target)) + bonus(target), c, { unitId: target.id });
+        const near = (e) => mine.filter((u) => distance(u, e) <= u.range + e.radius + 1.5).length;
+        const pool = theirs.filter((e) => near(e) >= 2);
+        if (!pool.length) break;
+        const target = pool.sort((a, b) => pri(b) - pri(a) || value(b) - value(a) || hp6(a) - hp6(b))[0];
+        add(4 + near(target) + Math.min(4, value(target)) + bonus(target), c, { unitId: target.id });
         break;
       }
       case 'purify': {
         const armored = theirs.find((u) => u.buffs.some((b) => b.kind === 'armor'));
-        const buffed = theirs.find((u) => u.buffs.length);
+        // 갑옷만 지운다 (다른 강화는 짧아서 2마나 값을 못 했다)
         if (armored) add(6, c, { unitId: armored.id });
-        else if (buffed) add(3, c, { unitId: buffed.id });
         break;
       }
       case 'disrupt': {
@@ -176,8 +182,9 @@ function thinkSmart(state, p, rng, o) {
         break;
       }
       case 'awaken': {
-        const best = mine.filter((u) => u.ult && !u.telegraphing && u.gauge <= 40).sort((a, b) => (b.ult.damage || 0) - (a.ult.damage || 0))[0];
-        if (best) add(6 + (best.ult.damage ? 2 : 0), c, { unitId: best.id });
+        // 피해를 주는 필살기(화염술사·거신)만. 궁수의 세 발 쏘기에 쓰면 3마나 값을 못 했다
+        const best = mine.filter((u) => u.ult && !u.telegraphing && u.gauge <= 40 && u.ult.damage).sort((a, b) => b.ult.damage - a.ult.damage)[0];
+        if (best) add(8, c, { unitId: best.id });
         break;
       }
       case 'armor': {
@@ -187,7 +194,12 @@ function thinkSmart(state, p, rng, o) {
         break;
       }
       case 'phalanx': {
-        const n = mine.filter((u) => u.ranged && threatened(u.x, u.y, u.radius)).length;
+        let n = mine.filter((u) => u.ranged && threatened(u.x, u.y, u.radius)).length;
+        if (!n && o.plan) {
+          // 범위 필살기(화염술사·거신)의 게이지가 거의 찬 적 유닛 근처에 내 원거리 유닛이 있다
+          const soon = theirs.filter((e) => e.ult && e.ult.damage && !e.telegraphing && e.gauge >= 75 && e.silenceUntil <= t);
+          n = mine.filter((u) => u.ranged && soon.some((e) => distance(e, u) <= e.range + r.blastRadius + u.radius + 1)).length;
+        }
         if (n >= 1) add(10 + 2 * n, c, null);
         break;
       }
@@ -226,11 +238,21 @@ function thinkSmart(state, p, rng, o) {
     }
   }
 
-  if (cands.length) {
-    if (o.mistake && rng() < o.mistake) return rng.pick(cands).action;
-    cands.sort((a, b) => b.score - a.score);
-    return cands[0].action;
+  cands.sort((a, b) => b.score - a.score);
+  const now = cands.filter((x) => x.k <= P.mana);
+  const later = cands.filter((x) => x.k > P.mana);
+  if (o.plan && later.length) {
+    // 곧(약 2.5초 안에) 낼 수 있는 더 좋은 카드가 있으면, 급한 카드(점수 12 이상)가 아닌 한 마나를 모은다
+    const L = later[0];
+    const A = now[0];
+    const waitMs = (L.k - P.mana) * r.manaIntervalMs - (P.manaTimer || 0);
+    if ((!A || (A.score < o.urgent && L.score > A.score + o.saveMargin)) && waitMs <= o.saveMs) return null;
   }
+  if (now.length) {
+    if (o.mistake && rng() < o.mistake) return rng.pick(now).action;
+    return now[0].action;
+  }
+  if (o.plan) return planRedraw(state, p, cands, cost);
 
   if (P.hand.length && canRedraw(state, p).ok) {
     const dud = P.hand.find((c) => CARDS[c.id].matchOnly && !state.stakes);
@@ -247,6 +269,29 @@ function thinkSmart(state, p, rng, o) {
     }
   }
   return null;
+}
+
+/**
+ * 다시 뽑기: 지금 쓸 데가 없는 카드만 버린다. 마나만 모자란 카드는 들고 있는다.
+ * 쓸 데 없는 카드: 경기 밖의 투자, 10초 안에 최대 마나가 닿지 않는 비싼 카드, 지금 조건이 안 맞는 주문.
+ */
+function planRedraw(state, p, cands, cost) {
+  const P = state.players[p];
+  const r = state.rules;
+  if (!P.hand.length || !canRedraw(state, p).ok) return null;
+  if (cands.length) return null; // 마나를 기다리는 카드가 있으면 다시 뽑기로 마나를 쓰지 않는다
+  const reach = Math.min(r.maxManaCap + P.maxManaBonus, P.maxMana + Math.floor(10000 / r.maxManaIntervalMs));
+  const dud = P.hand.find((c) => CARDS[c.id].matchOnly && !state.stakes);
+  if (dud) return { type: 'redraw', uid: dud.uid };
+  const prio = (c) => {
+    const def = CARDS[c.id];
+    const k = cost(c);
+    if (k > reach) return 50 + k; // 이번 전투에 못 낼 가능성이 크다
+    if (def.type !== 'unit') return 20 - k; // 조건이 안 맞는 주문
+    return -1; // 유닛은 자리만 나면 낼 수 있다
+  };
+  const pick = [...P.hand].sort((a, b) => prio(b) - prio(a))[0];
+  return prio(pick) >= 0 ? { type: 'redraw', uid: pick.uid } : null;
 }
 
 /** 유닛을 소환할 배치 칸. 근접은 앞줄에서 적과 가까운 쪽, 원거리는 뒷줄. */

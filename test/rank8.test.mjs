@@ -126,12 +126,24 @@ test('유령 보드: 탈락자의 마지막 덱을 복제하고, 유령은 피�
   // 유령에게 지면 피해는 그대로 받는다
   const real = gb.sides.find((p) => p !== null);
   const hp = g.players[real].hp;
+  const base = E.roundInfo(g).baseDamage;
   const s = fake(g, (b) => (b.sides.includes(null) ? { winner: b.sides.indexOf(null), survivors: [3, 3] } : {}));
-  assert.equal(g.players[real].hp, hp - (2 + 3));
+  assert.equal(g.players[real].hp, hp - (base + 3 * ECON8.survivorDamage));
   assert.equal(s.results.filter((r) => r.group === battles.indexOf(gb)).length, 1, '유령 쪽 결과는 없다');
 });
 
 // ───────────────────────── 형식별 피해 ─────────────────────────
+
+test('8인 기본 피해는 3에서 라운드마다 +1 (최대 20), 남은 유닛 한 기당 3. 1:1은 2에서 두 라운드마다 +1 (최대 8)', () => {
+  const g = mk();
+  const d = (r) => E.roundInfo(g, r).baseDamage;
+  assert.deepEqual([3, 4, 5, 6, 8, 18, 30].map(d), [3, 4, 5, 6, 8, 18, 20]);
+  assert.equal(d(9), 0, '보스 레이드');
+  assert.equal(g.econ.survivorDamage, 3);
+  const duel = E.createGame({ seed: 1, startDecks: 'commander', players: [{ commander: 'general', picks: [...PICKS, 'rats', 'turtle', 'banner'] }, { commander: 'lord', picks: [...PICKS, 'rats', 'turtle', 'banner'] }] });
+  assert.deepEqual([3, 4, 5, 6, 14, 30].map((r) => E.roundInfo(duel, r).baseDamage), [2, 2, 3, 3, 7, 8]);
+  assert.equal(duel.econ.survivorDamage, 1);
+});
 
 
 test('난투장 피해: 1위 0%, 2위 30%, 3위 70%, 4위 100%. 군주는 난전에서 30% 덜 받는다', () => {
@@ -139,25 +151,26 @@ test('난투장 피해: 1위 0%, 2위 30%, 3위 70%, 4위 100%. 군주는 난전
   const h = mk();
   for (const game of [g, h]) advanceTo(game, 10);
   const base = E.roundInfo(h).baseDamage;
-  assert.equal(base, 5);
+  assert.equal(base, 10);
+  const full = base + 5 * ECON8.survivorDamage; // 살아남은 상대의 유닛 5기
   const res = () => ({ ranks: [0, 1, 2, 3], survivors: [5, 0, 0, 0], dead: [false, true, true, true] });
   const sh = fake(h, res);
   const sg = fake(g, res);
   const dmg = (s, group, rank) => s.results.find((x) => x.group === group && x.rank === rank).damage;
-  assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sh, 0, k)), [0, 3, 7, 10]);
-  assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sg, 0, k)), [0, 3, 5, 7], '군주: 올림(피해 × 0.7)');
+  assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sh, 0, k)), [0, 0.3, 0.7, 1].map((x) => Math.ceil(full * x)));
+  assert.deepEqual([0, 1, 2, 3].map((k) => dmg(sg, 0, k)), [0, 0.3, 0.7, 1].map((x) => Math.ceil(Math.ceil(full * x) * 0.7)), '군주: 올림(피해 × 0.7)');
 });
 
 test('연합전 피해: 진 팀의 두 명이 각자 결투 피해의 절반을 받는다', () => {
   const g = mk();
   advanceTo(g, 7);
   const base = E.roundInfo(g).baseDamage;
-  assert.equal(base, 4);
+  assert.equal(base, 7);
   const b = E.roundBattles(g)[0];
   const s = fake(g, () => ({ winnerTeam: 1, ranks: [2, 3, 0, 0], survivors: [0, 0, 3, 2] }));
   const r = (p) => s.results.find((x) => x.p === p);
-  assert.equal(r(b.sides[0]).damage, Math.ceil((base + 5) / 2));
-  assert.equal(r(b.sides[1]).damage, Math.ceil((base + 5) / 2));
+  assert.equal(r(b.sides[0]).damage, Math.ceil((base + 5 * ECON8.survivorDamage) / 2));
+  assert.equal(r(b.sides[1]).damage, Math.ceil((base + 5 * ECON8.survivorDamage) / 2));
   assert.equal(r(b.sides[2]).damage, 0);
   assert.deepEqual([r(b.sides[0]).won, r(b.sides[3]).won], [false, true]);
 });

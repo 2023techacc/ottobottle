@@ -401,12 +401,14 @@ function memberInfo(game, m) {
 
 function damageRule(info, game) {
   const b = info.baseDamage;
+  const k = game.econ.survivorDamage;
+  const units = (who) => (k === 1 ? `${who} 남은 유닛 수` : `${who} 남은 유닛 수 × ${k}`);
   switch (info.format) {
     case 'practice': return 'HP 피해 없음, 이기면 골드 +2';
     case 'boss': return 'HP 피해 없음. 보스에게 준 피해 순위로 보상을 받는다';
-    case 'duel': return `지면 HP −(${b} + 상대에게 남은 유닛 수)`;
-    case 'melee4': return `가운데 원 점령과 처치 점수로 순위를 정한다. 기준 피해 ${b} + 남은 상대 유닛 수. 2위 30%, 3위 70%, 4위 100%`;
-    case 'alliance': return `지면 둘 다 (${b} + 이긴 팀에 남은 유닛 수)의 절반을 받는다`;
+    case 'duel': return `지면 HP −(${b} + ${units('상대에게')})`;
+    case 'melee4': return `가운데 원 점령과 처치 점수로 순위를 정한다. 기준 피해 ${b} + ${units('상대에게')}. 2위 30%, 3위 70%, 4위 100%`;
+    case 'alliance': return `지면 둘 다 (${b} + ${units('이긴 팀에')})의 절반을 받는다`;
     default: return '';
   }
 }
