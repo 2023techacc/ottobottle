@@ -173,9 +173,107 @@ function valueOf(c) {
   return v;
 }
 
+// ─────────────────────────────────────────────────────────────
+// 장기 전략 (opts.plan): 덱 방향, HP와 남은 목숨에 맞춘 경제, 남이 모으는 카드 피하기
+// ─────────────────────────────────────────────────────────────
+
+/** 덱 방향: 카드마다 그 방향에 얼마나 맞는지 (0~3) */
+export const DIRECTIONS = Object.freeze({
+  swarm: { name: '물량', cards: { rats: 3, bat: 2, banner: 3, bomber: 2, dagger: 2, shield: 1, warcry: 3, muster: 2, supply: 1 } },
+  wall: { name: '전열', cards: { shield: 3, turtle: 3, hammer: 3, lancer: 2, armor: 3, phalanx: 3, retreat: 2, banner: 1 } },
+  ranged: { name: '원거리', cards: { archer: 3, frostwitch: 3, pyro: 3, shield: 2, turtle: 1, awaken: 3, armor: 1 } },
+  spell: { name: '주문', cards: { firebolt: 3, chain: 3, blizzard: 3, purify: 2, crystal: 2, disrupt: 2, scout: 1, stockpile: 1 } },
+  big: { name: '큰 유닛', cards: { lancer: 2, hammer: 3, colossus: 3, pyro: 2, crystal: 2, supply: 2, stockpile: 2, armor: 1 } },
+});
+export const DIRECTION_IDS = Object.keys(DIRECTIONS);
+
+/** 장기 전략의 기능들. plan: true면 모두 켠다 */
+export const PLAN_FEATURES = Object.freeze({ direction: true, economy: true, contest: true });
+
+/** 상점 봇 난이도별 장기 전략 (전투 봇 난이도와 같은 이름) */
+export const SHOP_PLAN_BY_LEVEL = Object.freeze({ beginner: false, easy: false, normal: true, hard: true });
+
+// 봇이 기억하는 덱 방향. 규칙 상태(game)에는 넣지 않는다.
+const memory = new WeakMap();
+
+const fitOf = (dir, id) => (dir && DIRECTIONS[dir].cards[id]) || 0;
+
+/**
+ * 덱이 각 방향에 얼마나 가까운지 (강화한 카드는 장수만큼).
+ * crowd면 3명 이상인 경기에서 남들이 이미 많이 가져간 방향을 덜 친다.
+ */
+function directionScores(game, p, crowd) {
+  const P = game.players[p];
+  const many = crowd && game.players.length > 2;
+  const out = {};
+  for (const d of DIRECTION_IDS) {
+    let s = 0;
+    for (const c of P.deck) s += fitOf(d, c.id) * (c.parts ? c.parts.length : 1);
+    for (const [id, w] of Object.entries(DIRECTIONS[d].cards)) {
+      s += Math.max(0, likeOf(P.persona, id)) * w * 0.3;
+      if (many) s -= w * takenShare(game, p, id) * 2;
+    }
+    out[d] = s;
+  }
+  return out;
+}
+
+/**
+ * 덱 방향을 정한다. 3라운드에 처음 정하고, 6라운드까지는 다른 방향이 훨씬 앞서면 바꾼다. 그 뒤로는 그대로 간다.
+ * @returns {string|null}
+ */
+export function deckDirection(game, p, crowd = false) {
+  const P = game.players[p];
+  const mem = memory.get(P) || {};
+  if (game.round < 3) return null;
+  if (mem.dir && game.round > 6) return mem.dir;
+  const scores = directionScores(game, p, crowd);
+  const best = DIRECTION_IDS.reduce((a, b) => (scores[b] > scores[a] ? b : a));
+  if (!mem.dir || scores[best] > scores[mem.dir] * 1.3) mem.dir = best;
+  memory.set(P, mem);
+  return mem.dir;
+}
+
+/** 이 라운드쯤 한 번 지면 받을 HP 피해 (남은 유닛 3기를 친다) */
+function expectedLoss(game, P) {
+  const e = game.econ;
+  const n = Math.max(1, game.round + 1 - e.practiceRounds);
+  const base = Math.min(e.damageMax, e.damageMin + Math.floor((n - 1) / e.damageEvery));
+  const dmg = base + 3 * e.survivorDamage;
+  return P.commander === 'lord' ? Math.ceil(dmg * e.lordDamage) : dmg;
+}
+
+/**
+ * 형편: 몇 번 더 지면 탈락하는지와 다른 사람들과 견준 HP로 정한다.
+ *   allin  위험하다: 골드를 남기지 않고 다시 뽑기를 더 해서 지금 강해진다
+ *   greed  넉넉하다: 이자를 꽉 채우고 레벨을 올려 나중을 준비한다
+ *   steady 그 사이: 상점 성향대로
+ */
+export function shopOutlook(game, p) {
+  const P = game.players[p];
+  if (game.round < 3) return 'steady';
+  const lives = P.hp / expectedLoss(game, P);
+  const others = game.players.filter((Q) => Q.alive && Q !== P);
+  const below = others.filter((Q) => Q.hp < P.hp).length / Math.max(1, others.length); // 나보다 HP가 낮은 사람 비율
+  if (lives <= 2.5) return 'allin';
+  if (lives >= 5 && below >= 0.5) return 'greed';
+  return 'steady';
+}
+
+/** 이 카드 가운데 다른 살아 있는 사람들이 가져간 비율 (남들 덱 ÷ (남들 덱 + 풀)) */
+function takenShare(game, p, id) {
+  let n = 0;
+  for (const Q of game.players) {
+    if (!Q.alive || Q.idx === p) continue;
+    for (const c of Q.deck) if (c.id === id) n += c.parts ? c.parts.length : 1;
+  }
+  return n / Math.max(1, n + game.pool[id]);
+}
+
 /**
  * 한 라운드의 상점을 끝까지 본다. 행동은 game에 바로 적용된다.
- * @param {{style?:'eco'|'balanced'|'spend'}} [opts]
+ * @param {{style?:'eco'|'balanced'|'spend', level?:string, plan?:boolean|{direction?:boolean,economy?:boolean,contest?:boolean}}} [opts]
+ *   plan: 장기 전략. 주지 않으면 level(SHOP_PLAN_BY_LEVEL)을 따르고, level도 없으면 끈다.
  */
 export function runShopBot(game, p, opts = {}) {
   const P = game.players[p];
@@ -192,8 +290,24 @@ export function runShopBot(game, p, opts = {}) {
       .sort((a, b) => b.v - a.v)[0];
     if (!best || best.v < 0 || !claimReward(game, p, best.i).ok) skipReward(game, p);
   }
-  // 초반이거나 HP가 위험하면 아끼지 않는다
-  const reserve = game.round < 4 || P.hp <= 15 ? 0 : style.reserve;
+  // 장기 전략
+  const planOpt = opts.plan ?? (opts.level ? SHOP_PLAN_BY_LEVEL[opts.level] : false);
+  const plan = planOpt ? { ...PLAN_FEATURES, ...(planOpt === true ? {} : planOpt) } : null;
+  const dir = plan && plan.direction ? deckDirection(game, p, plan.contest) : null;
+  const outlook = plan && plan.economy ? shopOutlook(game, p) : null;
+
+  // 초반이거나 HP가 위험하면 아끼지 않는다. 장기 전략이 있으면 형편을 따른다:
+  //   위험하면 다 쓰고 다시 뽑기를 더 하고, 넉넉하면 이자를 꽉 채운다(30골드)
+  let reserve = game.round < 4 || P.hp <= 15 ? 0 : style.reserve;
+  let maxRerolls = style.maxRerolls;
+  let buyAt = 6;
+  if (outlook === 'allin') {
+    reserve = 0;
+    maxRerolls += 3;
+    buyAt = 5;
+  } else if (outlook === 'greed') {
+    reserve = Math.max(reserve, e.interestPer * e.interestMax);
+  }
   let rerolls = 0;
 
   const scoreSlot = (s) => {
@@ -208,6 +322,18 @@ export function runShopBot(game, p, opts = {}) {
     if (def.type !== 'unit' && share < 0.5) score -= 3;
     if (P.deck.length >= style.targetSize && same < 2) score -= 3;
     if (def.cost >= 5 && P.deck.filter((c) => CARDS[c.id].cost >= 5).length >= 2) score -= 3;
+    if (dir) {
+      // 덱 방향에 맞는 카드는 더, 맞지 않는 새 카드는 덜
+      const fit = fitOf(dir, s.id);
+      score += fit * 0.8;
+      if (!fit && same === 0) score -= 1;
+    }
+    if (plan && plan.contest && same < 2) {
+      // 남들이 대부분 가져간 카드는 3장을 채우기 어렵다 (풀이 마른다)
+      const left = game.pool[s.id] - 1; // 이 카드를 사고 나서 풀에 남는 장수
+      if (same === 0 && takenShare(game, p, s.id) >= 0.6) score -= 2;
+      if (left < 2 - same) score -= 2;
+    }
     return { score, same };
   };
 
@@ -220,26 +346,34 @@ export function runShopBot(game, p, opts = {}) {
       const { score, same } = scoreSlot(s);
       const cost = CARDS[s.id].tier;
       const keep = same >= 2 ? 0 : reserve;
-      if (score >= 6 && P.gold - cost >= keep && P.deck.length < e.deckMax && (!best || score > best.score)) best = { i, score };
+      if (score >= buyAt && P.gold - cost >= keep && P.deck.length < e.deckMax && (!best || score > best.score)) best = { i, score };
     });
     if (best && buy(game, p, best.i).ok) continue;
 
-    if (P.level < e.maxLevel && game.round >= 3 && P.gold - e.xpCost >= reserve + 2 && buyXp(game, p).ok) continue;
+    if (P.level < e.maxLevel && game.round >= 3) {
+      const short = e.xpToNext[P.level] - P.xp; // 다음 레벨까지 남은 경험치
+      // 장기 전략: 한 번에 레벨이 오르면 아낀 골드를 조금 깨서라도 올린다 (위험할 때는 시작 카드가 느는 레벨업만)
+      const finish = plan && plan.economy && short <= e.xpPerBuy && P.gold - e.xpCost >= reserve - 4;
+      const normal = outlook !== 'allin' && P.gold - e.xpCost >= reserve + (outlook === 'greed' ? 0 : 2);
+      if ((finish || normal) && buyXp(game, p).ok) continue;
+    }
 
     const rc = rerollCostOf(game, p);
-    if (rerolls < style.maxRerolls && (rc === 0 || P.gold - rc >= reserve + 3)) {
+    if (rerolls < maxRerolls && (rc === 0 || P.gold - rc >= reserve + 3)) {
       rerolls++;
       if (reroll(game, p).ok) continue;
     }
     break;
   }
 
-  // 가장 쓸모없는 카드 하나를 뺀다
+  // 가장 쓸모없는 카드 하나를 뺀다. 덱 방향이 있으면 방향에 맞지 않는 약한 카드도 뺀다.
+  const keepValue = (c) => valueOf(c) + fitOf(dir, c.id);
+  const cutAt = dir ? 4 : 2;
   if (P.removesLeft > 0 && P.deck.length > Math.max(e.deckMin, 9) && P.gold >= e.removeCost + (reserve ? 2 : 0)) {
     const worst = [...P.deck]
       .filter((c) => P.deck.filter((x) => x.id === c.id && x.stars === c.stars).length < 2)
-      .sort((a, b) => valueOf(a) - valueOf(b))[0];
-    if (worst && valueOf(worst) <= 2) removeCard(game, p, worst.key);
+      .sort((a, b) => keepValue(a) - keepValue(b))[0];
+    if (worst && keepValue(worst) <= cutAt && (!dir || !fitOf(dir, worst.id))) removeCard(game, p, worst.key);
   }
 
   // 융합: 남는 재료 하나를 가장 좋은 유닛에 붙인다. 강화(3장)를 노리는 2장짜리 카드는 재료로 쓰지 않는다.

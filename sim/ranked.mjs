@@ -89,7 +89,7 @@ function playMatch(seed, entrants) {
   const game = E.createGame({ seed, players, mode: MODE });
   for (const P of game.players) E.runDraftBot(game, P.idx);
   while (game.phase !== 'over' && game.round < 120) {
-    for (const p of E.shopBotOrder(game)) E.runShopBot(game, p, {});
+    for (const p of E.shopBotOrder(game)) E.runShopBot(game, p, { level: entrants[p].level });
     const battles = E.assignBattleBots(game, E.roundBattles(game), (p) => entrants[p].level).map((b) => ({ ...b, state: E.runRoundBattle(b).state }));
     E.finishRound(game, battles);
   }

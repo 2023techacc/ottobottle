@@ -377,7 +377,7 @@ test('전투 설정: 덱, 고른 시작 카드, 레벨에 따른 장수가 넘�
 
 // ───────────────────────── 봇끼리 한 경기 ─────────────────────────
 
-function botGame(seed, styles = ['balanced', 'balanced']) {
+function botGame(seed, styles = ['balanced', 'balanced'], shopOpts = {}) {
   const rng = E.makeRng(E.hashSeed(seed, 'setup'));
   const players = [0, 1].map(() => ({ commander: rng.pick(E.COMMANDER_IDS), picks: E.botPicks(rng) }));
   const game = E.createGame({ seed, players });
@@ -386,7 +386,7 @@ function botGame(seed, styles = ['balanced', 'balanced']) {
   assert.equal(game.phase, 'shop');
   while (game.phase !== 'over') {
     assert.ok(game.round < 60, '경기가 끝나지 않는다');
-    for (const p of [0, 1]) E.runShopBot(game, p, { style: styles[p] });
+    for (const p of [0, 1]) E.runShopBot(game, p, { style: styles[p], ...shopOpts });
     for (const P of game.players) {
       assert.ok(P.gold >= 0);
       assert.ok(P.deck.length >= game.econ.deckMin && P.deck.length <= game.econ.deckMax);
@@ -507,4 +507,41 @@ test('첩보원 봇의 빠른 대응: 미리 돌려 보지 않고, 상대가 원
   // 상대가 아무것도 고르지 않았으면 대응하지 않는다
   E.setOpening(g, 1, []);
   assert.equal(E.spyCounterOpening(g, 0), null);
+});
+
+// ───────────────────────── 상점 봇의 장기 전략 ─────────────────────────
+
+test('장기 전략을 켠 상점 봇도 경기를 끝까지 치르고, 같은 시드면 똑같이 진행된다', () => {
+  for (let seed = 1; seed <= 8; seed++) {
+    const g = botGame(seed, ['balanced', 'eco'], { plan: true });
+    assert.equal(g.phase, 'over');
+  }
+  assert.deepEqual(botGame(5, undefined, { plan: true }).history, botGame(5, undefined, { plan: true }).history);
+  assert.equal(E.SHOP_PLAN_BY_LEVEL.easy, false);
+  assert.equal(E.SHOP_PLAN_BY_LEVEL.hard, true);
+});
+
+test('덱 방향: 3라운드에 덱에 맞춰 정하고, 6라운드가 지나면 바꾸지 않는다', () => {
+  const g = mk();
+  const P = g.players[0];
+  g.round = 2;
+  assert.equal(E.deckDirection(g, 0), null, '3라운드 전에는 정하지 않는다');
+  g.round = 3;
+  P.deck = ['archer', 'archer', 'frostwitch', 'pyro', 'shield', 'awaken', 'rats', 'firebolt'].map((id, i) => ({ key: `t${i}`, id, stars: 1, parts: [id] }));
+  assert.equal(E.deckDirection(g, 0), 'ranged');
+  g.round = 7;
+  P.deck = Array.from({ length: 12 }, (_, i) => ({ key: `r${i}`, id: 'rats', stars: 1, parts: ['rats'] }));
+  assert.equal(E.deckDirection(g, 0), 'ranged', '6라운드가 지나면 정한 방향을 지킨다');
+});
+
+test('형편: 몇 번 더 지면 탈락하면 다 쓰고, HP가 넉넉하고 앞서면 이자를 모은다', () => {
+  const g = mk();
+  g.round = 6;
+  g.players[0].hp = 6;
+  assert.equal(E.shopOutlook(g, 0), 'allin');
+  g.players[0].hp = 40;
+  g.players[1].hp = 20;
+  assert.equal(E.shopOutlook(g, 0), 'greed');
+  g.players[1].hp = 40;
+  assert.equal(E.shopOutlook(g, 0), 'steady', '앞서지 않으면 상점 성향대로');
 });

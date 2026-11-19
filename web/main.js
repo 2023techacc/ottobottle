@@ -373,7 +373,7 @@ function endMatch() {
 function runBotShops() {
   const { game } = match;
   // 첩보원 봇은 맨 뒤에: 다른 사람이 고른 시작 카드를 보고 고른다
-  for (const p of E.shopBotOrder(game)) if (p !== ME && game.players[p].alive) E.runShopBot(game, p, { style: match.styles[p] });
+  for (const p of E.shopBotOrder(game)) if (p !== ME && game.players[p].alive) E.runShopBot(game, p, { style: match.styles[p], level: match.levels[p] || match.botLevel });
 }
 
 function beginShop() {

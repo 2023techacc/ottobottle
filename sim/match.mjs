@@ -8,6 +8,7 @@
 //   node sim/match.mjs --spy-info on        첩보원 봇이 상대 시작 카드로 미리 돌려 본다 (6~7배 느리다). off: 정보를 안 쓴다
 //   node sim/match.mjs --levels             플레이어마다 전투 봇 난이도를 무작위로 (난이도별 순위를 본다)
 //   node sim/match.mjs --personas           플레이어마다 봇 성격을 무작위로 (지휘관·상점 성향도 성격을 따른다. 성격별 순위를 본다)
+//   node sim/match.mjs --plan off           상점 봇의 장기 전략을 끈다 (on: 모두 켠다. 기본은 난이도를 따른다)
 //
 // 결과는 sim/out/match_<모드>_*.csv 에도 저장한다.
 
@@ -26,6 +27,8 @@ const ECON = args.econ ? JSON.parse(args.econ) : {};
 const SPY_INFO = args['spy-info'] === 'on' ? true : args['spy-info'] === 'off' ? false : undefined;
 const LEVELS = args.levels ? Object.keys(E.BOT_LEVELS) : null; // --levels: 플레이어마다 난이도를 무작위로
 const PERSONAS = args.personas ? E.PERSONA_IDS : null; // --personas: 플레이어마다 성격을 무작위로
+// --plan on/off: 상점 봇의 장기 전략을 모두 켜거나 끈다. 기본은 난이도를 따른다 (보통·어려움은 켬)
+const PLAN = args.plan === 'on' ? true : args.plan === 'off' ? false : undefined;
 const OUT = path.resolve(args.out || path.join(path.dirname(fileURLToPath(import.meta.url)), 'out'));
 const STYLES = Object.keys(E.SHOP_STYLES);
 const FORMAT_NAMES = { practice: '연습', duel: '결투', melee4: '난투장', alliance: '연합전', boss: '보스 레이드' };
@@ -48,7 +51,7 @@ function playGame(seed) {
   const formats = [];
   let battleMs = 0;
   while (game.phase !== 'over' && game.round < 120) {
-    for (const p of E.shopBotOrder(game)) E.runShopBot(game, p, { style: styles[p], spyInfo: SPY_INFO });
+    for (const p of E.shopBotOrder(game)) E.runShopBot(game, p, { style: styles[p], spyInfo: SPY_INFO, level: levels[p], plan: PLAN });
     perRound.push(game.players.map((P) => ({ alive: P.alive, level: P.level, gold: P.gold, deck: P.deck.length, hp: P.hp })));
     // 플레이어(와 그 유령)는 자기 난이도·성격으로 싸운다. 중립 몬스터·보스는 그대로
     const battles = E.assignBattleBots(game, E.roundBattles(game), (p) => levels[p]).map((b) => ({ ...b, state: E.runRoundBattle(b).state }));
